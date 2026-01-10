@@ -1,26 +1,28 @@
 # Repository Guidelines
 
-## Project Structure & Modules
+This thesis repository explores **Computational Dignity**: self-describing embedded nodes (ESP32 + ATtiny)
+that speak a human-readable, line-oriented protocol over UART.
 
-This repository is currently documentation-first. Key files live at the repo root:
+## Project Structure & Module Organization
 
-- `PROJECT_SPEC.md`: thesis/vision + system architecture (source of truth for intent)
-- `PROTOCOL_REFERENCE.md`: command/response tables and wire-format examples (source of truth for syntax)
-- `CONTEXT_TRANSFER.md`: short “paste into a new chat” summary to regain context quickly
+Start here:
+- `PROJECT_SPEC.md`: thesis vision + architecture
+- `PROTOCOL_REFERENCE.md`: protocol syntax + examples
+- `CONTEXT_TRANSFER.md`: “paste into a new chat” project summary
 
-When adding implementation artifacts, keep them separated and predictable:
-- `firmware/esp32/`: smart node (ESP32forth baseline)
-- `firmware/attiny/`: dumb node / sensor adapters (C baseline)
-- `tools/terminal/`: host/terminal CLI + snapshots/transcripts
-- `docs/`: longer-form specs, diagrams, transcripts, decisions
+Implementation and tooling:
+- `firmware/esp32/`: ESP32forth baseline + `codignity.fs`
+- `firmware/attiny/`: ATtiny C firmware (planned/ongoing)
+- `tools/terminal/`: serial tooling + transcripts
+- `docs/`: longer notes/diagrams (optional)
 
 ## Build, Test, and Development Commands
 
-- Search across specs: `rg "explain|source|history|! end|validate"`
-- Optional PDF export (requires `pandoc`): `pandoc PROJECT_SPEC.md -o PROJECT_SPEC.pdf`
-- Build + flash ESP32forth (uses workspace-local Arduino core v1.0.6): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
-- Load MVP protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
-- Smoke-test protocol: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
+- Host deps: `python -m venv .venv && . .venv/bin/activate && pip install -r tools/terminal/requirements.txt`
+- Flash ESP32forth (Arduino core pinned in `tools/arduino/arduino-cli.yaml`): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
+- Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
+- Enter protocol mode: run `cd-node` on the console (disables echo/prompt).
+- Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
 
 ## Coding Style & Naming Conventions
 
@@ -44,10 +46,9 @@ example request/response transcripts and any backward-compatibility notes.
 
 - Branches: keep `main` releasable; use short-lived branches like `feat/<area>-<topic>`, `docs/<topic>`,
   `fix/<topic>`, `chore/<topic>`.
-- Workflow: do work on a branch, commit in small logical steps, and merge via PR; avoid rewriting shared history.
-- Commits: use Conventional Commits (e.g., `docs: clarify dump response`, `protocol: add safe-save details`).
-- PRs: include a crisp description, linked context, and at least one real transcript for protocol changes.
-  Update both `PROJECT_SPEC.md` and `PROTOCOL_REFERENCE.md` when semantics change.
+- Workflow: commit in small steps; merge via PR; avoid rewriting shared history.
+- Commits: Conventional Commits (`chore:`, `docs:`, `feat:`, `fix:`).
+- PRs: include rationale, linked context, and at least one request/response transcript for protocol changes.
 
 ## Agent-Specific Notes (Codex CLI)
 
