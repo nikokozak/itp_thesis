@@ -9,6 +9,10 @@ only forth definitions also internals also interrupts
 \ TODO(thesis): Persist history/source to flash (SPIFFS) and implement rollback.
 \ TODO(thesis): Replace `bye`-based reboot with a clean ESP32 restart primitive.
 
+vocabulary cd-user
+' cd-user >body constant cd-user-wordlist
+' forth >body constant cd-forth-wordlist
+
 256 constant cd-fifo-size
 create cd-fifo cd-fifo-size 2* cells allot  \ value, timestamp pairs
 
@@ -66,6 +70,50 @@ variable cd-error-emitted
 : cd-parse-int-or ( default -- n )
   bl parse dup 0= if 2drop exit then
   rot drop evaluate ;
+
+\ ------------------------------------------------------------
+\ User vocabulary helpers
+
+: cd-wordlist-has? ( a n wl -- f )
+  >r r@ @
+  begin dup nonvoc? while
+    dup >name 2over str= if
+      2drop rdrop drop -1 exit
+    then
+    >link
+  repeat
+  drop 2drop rdrop 0 ;
+
+variable cd-define-current
+: cd-define-current-save ( -- ) current @ cd-define-current ! ;
+: cd-define-current-restore ( -- ) cd-define-current @ current ! ;
+
+: cd-token { a n -- aTok nTok aRest nRest f }
+  a n cd-skip-spaces to n to a
+  n 0= if 0 0 0 0 0 exit then
+  a { start }
+  0 { len }
+  begin
+    n 0<> while
+      a c@ cd-space? if leave then
+      1 +to len
+      a 1+ to a
+      n 1- to n
+  repeat
+  start len a n -1 ;
+
+: cd-colon-token? ( a n -- f ) 1 = swap c@ [char] : = and ;
+
+\ Parse `: name ... ;` from a line and return the `name` token.
+: cd-define-name ( a n -- a n f )
+  cd-token 0= if 0 0 0 exit then      \ a1 n1 aR nR
+  >r >r
+  2dup cd-colon-token? 0= if
+    2drop r> r> 2drop 0 0 0 exit
+  then
+  2drop
+  r> r> cd-token 0= if 2drop 2drop 0 0 0 exit then
+  2drop -1 ;
 
 \ ------------------------------------------------------------
 \ Files (SPIFFS) helpers
@@ -202,9 +250,22 @@ variable cd-hist-count
 
 : define ( -- )
   cd-rest-of-line cd-skip-spaces
+  2dup cd-define-name 0= if
+    s" define_syntax" cd.#err cd.!end cd-consume-line 2drop 2drop exit
+  then
+  2dup cd-user-wordlist cd-wordlist-has? if
+    s" define_exists" cd.#err cd.!end cd-consume-line 2drop 2drop exit
+  then
+  2dup cd-forth-wordlist cd-wordlist-has? if
+    s" define_reserved" cd.#err cd.!end cd-consume-line 2drop 2drop exit
+  then
+  2drop
   2dup cd-hist-add
   cd-consume-line
+  cd-define-current-save
+  cd-user-wordlist current !
   evaluate
+  cd-define-current-restore
   cd.!ok
   cd.!end ;
 
@@ -392,4 +453,4 @@ cd-lkg-build
 sp0 sp!
 fp0 fp!
 
-only forth definitions
+only forth definitions also cd-user
