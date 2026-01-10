@@ -9,6 +9,7 @@ Start here:
 - `PROTOCOL_REFERENCE.md`: protocol syntax + examples
 - `CONTEXT_TRANSFER.md`: “paste into a new chat” project summary
 - `ROADMAP.md`: prioritized implementation milestones
+- `MILESTONE_B_PLAN.md`: Milestone B2 implementation plan
 
 Implementation and tooling:
 - `firmware/esp32/`: ESP32forth baseline + `codignity.fs`

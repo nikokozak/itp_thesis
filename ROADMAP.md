@@ -25,6 +25,8 @@ breaking it with `define`.
 
 **Goal:** The node explains itself from its own stored state, not from hardcoded strings.
 
+Implementation plan: `MILESTONE_B_PLAN.md`
+
 1. **Metadata model**
    - Minimal, explicit fields (e.g., `node-id`, `role`, `pins`, `sample-units`, `children`).
    - `?` and `explain` derive output from this model.
