@@ -138,8 +138,28 @@ variable cd-hist-count
   ." ! I am a smart node running ESP32forth on an ESP32." cr
   ." ! I speak a human-readable, line-oriented protocol over UART." cr
   ." ! Core commands: ? s n d c" cr
-  ." ! Extended commands: explain source history define save" cr
+  ." ! Extended commands: explain source history define save validate safe-save" cr
   ." ! FIFO samples: " cd-fifo-size . cr
+  cd.!end ;
+
+: cd-validate? ( -- f ) depth 0= fdepth 0= and ;
+
+: validate ( -- )
+  cd-validate? if
+    cd.!ok
+  else
+    ." ! fail stack" cr
+  then
+  cd.!end ;
+
+: safe-save ( -- )
+  cd-validate? if
+    remember
+    s" safe-save" cd-hist-add
+    cd.!ok
+  else
+    ." ! fail validate" cr
+  then
   cd.!end ;
 
 : history ( -- )
@@ -242,6 +262,8 @@ create cd-ch 1 allot
   ['] history see-xt
   ['] define see-xt
   ['] save see-xt
+  ['] validate see-xt
+  ['] safe-save see-xt
   ['] cd-node see-xt
 
   cd-old-type @ cd-type-xt!
