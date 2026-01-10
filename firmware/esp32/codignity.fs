@@ -71,47 +71,36 @@ variable cd-error-emitted
 \ Files (SPIFFS) helpers
 
 4 constant cd-safe-gpio  \ DOIT ESP32 DEVKIT V1: user wired button between GPIO4 and GND.
-512 constant cd-copy-buf-size
-create cd-copy-buf cd-copy-buf-size allot
-variable cd-src-fd
-variable cd-dst-fd
 
-: cd-fd-init ( -- ) -1 cd-src-fd ! -1 cd-dst-fd ! ;
-: cd-close-fd ( fd -- ) dup -1 <> if close-file drop else drop then ;
-: cd-close-files ( -- )
-  cd-src-fd @ cd-close-fd  -1 cd-src-fd !
-  cd-dst-fd @ cd-close-fd  -1 cd-dst-fd ! ;
+64 constant cd-path-max
+create cd-myforth-path cd-path-max allot
+variable cd-myforth-n
 
-: cd-myforthz ( -- z ) z" /spiffs/myforth" ;
-: cd-lkgz ( -- z ) z" /spiffs/myforth.lkg" ;
+: cd-myforth-build ( -- )
+  remember-filename dup cd-myforth-n ! cd-myforth-path swap cmove
+  cd-myforth-path cd-myforth-n @ + 0 swap c! ;
 
-: cd-copy-file ( zsrc zdst -- ior )
-  cd-fd-init
-  >r
-  0 r/o open-file dup 0<> if
-    >r drop r> r> drop exit
+: cd-myforth$ ( -- a n ) cd-myforth-path cd-myforth-n @ ;
+
+64 constant cd-lkg-max
+create cd-lkg-path cd-lkg-max allot
+variable cd-lkg-n
+
+: cd-lkg-build ( -- )
+  cd-myforth$ dup cd-lkg-n ! cd-lkg-path swap cmove
+  s" .lkg" cd-adv dup >r
+  cd-lkg-path cd-lkg-n @ + swap cmove
+  cd-lkg-n @ r@ + dup cd-lkg-n !
+  cd-lkg-path + 0 swap c!
+  r> drop ;
+
+: cd-lkg$ ( -- a n ) cd-lkg-path cd-lkg-n @ ;
+
+: cd-file-exists? ( a n -- f )
+  r/o open-file dup 0<> if
+    drop drop 0 exit
   then
-  drop ( srcFd )
-  dup cd-src-fd ! drop
-  r> 0 w/o create-file dup 0<> if
-    >r drop
-    cd-src-fd @ close-file drop -1 cd-src-fd !
-    r> exit
-  then
-  drop ( dstFd )
-  dup cd-dst-fd ! drop
-  begin
-    cd-copy-buf cd-copy-buf-size cd-src-fd @ read-file ( u ior )
-    dup 0<> if >r drop cd-close-files r> exit then
-    drop
-    dup 0= if drop cd-close-files 0 exit then
-    cd-copy-buf swap cd-dst-fd @ write-file ( ior )
-    dup 0<> if cd-close-files exit then
-    drop
-  again ;
-
-: cd-backup-saved ( -- )
-  cd-myforthz cd-lkgz cd-copy-file drop ;
+  drop close-file drop -1 ;
 
 \ ------------------------------------------------------------
 : cd-dump ( n -- )
@@ -311,8 +300,8 @@ variable cd-old-notfound
 
 : safe-save ( -- )
   cd-validate? if
-    cd-backup-saved
     cd-ensure-autostart
+    cd-lkg$ save-name
     remember
     s" safe-save" cd-hist-add
     cd.!ok
@@ -329,26 +318,25 @@ variable cd-old-notfound
 
 : recover ( -- )
   \ Factory reset: delete saved images and reboot.
-  cd-myforthz 0 delete-file drop
-  cd-lkgz 0 delete-file drop
+  cd-myforth$ delete-file drop
+  cd-lkg$ delete-file drop
   cd.!ok
   cd.!end
   100 ms
   bye ;
 
 : rollback ( -- )
-  \ Minimal rollback: restore last-known-good saved image (myforth.lkg) then reboot.
+  \ Minimal rollback: restore last-known-good image (myforth.lkg).
   1 cd-parse-int-or dup 1 <> if
     drop s" unsupported" cd.#err cd.!end exit
   then
   drop
-  cd-lkgz cd-myforthz cd-copy-file ?dup if
-    s" rollback_failed" cd.#err cd.#code cd.!end exit
+  cd-lkg$ cd-file-exists? 0= if
+    s" rollback_missing" cd.#err cd.!end exit
   then
   cd.!ok
   cd.!end
-  100 ms
-  bye ;
+  cd-lkg$ restore-name ;
 
 \ Source: decompile key words, prefixing each output line with "! ".
 variable cd-old-type
@@ -399,5 +387,9 @@ create cd-ch 1 allot
 
 cd-clear
 cd-hist-clear
+cd-myforth-build
+cd-lkg-build
+sp0 sp!
+fp0 fp!
 
 only forth definitions
