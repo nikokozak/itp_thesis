@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Editors
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Arduino / build caches (kept local)
+.arduino/
+.arduino-cli/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local config / secrets
+.env
+
+# Firmware/toolchain outputs
+*.bin
+*.elf
+*.hex
+*.uf2
+*.map
+*.o
+
+# Local exports
+*.pdf
+*.log
