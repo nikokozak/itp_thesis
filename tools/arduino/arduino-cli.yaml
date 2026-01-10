@@ -1,0 +1,4 @@
+directories:
+  data: .arduino-cli/data
+  downloads: .arduino-cli/downloads
+  user: .arduino-cli/user
