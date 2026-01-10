@@ -9,6 +9,7 @@ Start here:
 - `PROJECT_SPEC.md`: thesis vision + architecture
 - `PROTOCOL_REFERENCE.md`: protocol syntax + examples
 - `CONTEXT_TRANSFER.md`: “paste into a new chat” project summary
+- `ROADMAP.md`: prioritized implementation milestones
 
 Implementation and tooling:
 - `firmware/esp32/`: ESP32forth baseline + `codignity.fs`
