@@ -2,11 +2,12 @@ decimal
 
 \ ESP32forth hides many useful implementation words in the `internals` vocabulary.
 \ We opt-in so we can build a quiet, protocol-first command loop.
-only forth definitions also internals
+only forth definitions also internals also interrupts
 
 \ Computational Dignity protocol (ESP32 / ESP32forth)
 \ TODO(thesis): Replace dummy sampling with real sensor read + timestamp source.
 \ TODO(thesis): Persist history/source to flash (SPIFFS) and implement rollback.
+\ TODO(thesis): Replace `bye`-based reboot with a clean ESP32 restart primitive.
 
 256 constant cd-fifo-size
 create cd-fifo cd-fifo-size 2* cells allot  \ value, timestamp pairs
@@ -60,10 +61,59 @@ variable cd-error-emitted
 : cd-next-ts ( -- u ) cd-tick @ dup 1+ cd-tick ! ;
 : cd-next-sample ( -- value ts ) cd-next-ts dup ;
 
+: 2swap ( a b c d -- c d a b ) rot >r rot r> swap ;
+
 : cd-parse-int-or ( default -- n )
   bl parse dup 0= if 2drop exit then
   rot drop evaluate ;
 
+\ ------------------------------------------------------------
+\ Files (SPIFFS) helpers
+
+4 constant cd-safe-gpio  \ DOIT ESP32 DEVKIT V1: user wired button between GPIO4 and GND.
+512 constant cd-copy-buf-size
+create cd-copy-buf cd-copy-buf-size allot
+variable cd-src-fd
+variable cd-dst-fd
+
+: cd-fd-init ( -- ) -1 cd-src-fd ! -1 cd-dst-fd ! ;
+: cd-close-fd ( fd -- ) dup -1 <> if close-file drop else drop then ;
+: cd-close-files ( -- )
+  cd-src-fd @ cd-close-fd  -1 cd-src-fd !
+  cd-dst-fd @ cd-close-fd  -1 cd-dst-fd ! ;
+
+: cd-myforthz ( -- z ) z" /spiffs/myforth" ;
+: cd-lkgz ( -- z ) z" /spiffs/myforth.lkg" ;
+
+: cd-copy-file ( zsrc zdst -- ior )
+  cd-fd-init
+  >r
+  0 r/o open-file dup 0<> if
+    >r drop r> r> drop exit
+  then
+  drop ( srcFd )
+  dup cd-src-fd ! drop
+  r> 0 w/o create-file dup 0<> if
+    >r drop
+    cd-src-fd @ close-file drop -1 cd-src-fd !
+    r> exit
+  then
+  drop ( dstFd )
+  dup cd-dst-fd ! drop
+  begin
+    cd-copy-buf cd-copy-buf-size cd-src-fd @ read-file ( u ior )
+    dup 0<> if >r drop cd-close-files r> exit then
+    drop
+    dup 0= if drop cd-close-files 0 exit then
+    cd-copy-buf swap cd-dst-fd @ write-file ( ior )
+    dup 0<> if cd-close-files exit then
+    drop
+  again ;
+
+: cd-backup-saved ( -- )
+  cd-myforthz cd-lkgz cd-copy-file drop ;
+
+\ ------------------------------------------------------------
 : cd-dump ( n -- )
   dup 0= if drop cd.!end exit then
   dup >r
@@ -138,27 +188,19 @@ variable cd-hist-count
   ." ! I am a smart node running ESP32forth on an ESP32." cr
   ." ! I speak a human-readable, line-oriented protocol over UART." cr
   ." ! Core commands: ? s n d c" cr
-  ." ! Extended commands: explain source history define save validate safe-save" cr
+  ." ! Extended commands: explain source history define save validate safe-save restart recover rollback repl" cr
   ." ! FIFO samples: " cd-fifo-size . cr
   cd.!end ;
 
-: cd-validate? ( -- f ) depth 0= fdepth 0= and ;
+: cd-validate? ( -- f )
+  depth dup 0= swap -1 = or
+  fdepth 0= and ;
 
 : validate ( -- )
   cd-validate? if
     cd.!ok
   else
     ." ! fail stack" cr
-  then
-  cd.!end ;
-
-: safe-save ( -- )
-  cd-validate? if
-    remember
-    s" safe-save" cd-hist-add
-    cd.!ok
-  else
-    ." ! fail validate" cr
   then
   cd.!end ;
 
@@ -174,13 +216,6 @@ variable cd-hist-count
   2dup cd-hist-add
   cd-consume-line
   evaluate
-  cd.!ok
-  cd.!end ;
-
-: save ( -- )
-  \ Persist the current image to /spiffs/myforth (ESP32forth default).
-  remember
-  s" save" cd-hist-add
   cd.!ok
   cd.!end ;
 
@@ -214,7 +249,22 @@ variable cd-hist-count
   cd.!end
   cd-error-reset ;
 
+variable cd-exit
+variable cd-old-echo
+variable cd-old-arrow
+variable cd-old-notfound
+
+: repl ( -- )
+  -1 cd-exit !
+  cd.!ok
+  cd.!end ;
+
 : cd-node ( -- )
+  echo @ cd-old-echo !
+  arrow @ cd-old-arrow !
+  'notfound @ cd-old-notfound !
+
+  0 cd-exit !
   0 echo !
   0 arrow !
   cd-error-reset
@@ -224,8 +274,81 @@ variable cd-hist-count
       0 state ! sp0 sp! fp0 fp! rp0 rp!
       cd-handle-exception
     then
-    refill drop
-  again ;
+    cd-exit @ 0= if
+      refill drop
+      0
+    else
+      -1
+    then
+  until
+  cd-old-notfound @ 'notfound !
+  cd-old-echo @ echo !
+  cd-old-arrow @ arrow ! ;
+
+: cd-safe-setup ( -- )
+  cd-safe-gpio INPUT pinMode
+  cd-safe-gpio gpio_pullup_en drop ;
+
+: cd-safe-pressed? ( -- f ) cd-safe-gpio digitalRead 0= ;
+
+: cd-boot ( -- )
+  cd-safe-setup
+  cd-safe-pressed? if
+    ." SAFE: pressed; staying in REPL" cr
+  else
+    cd-node
+  then ;
+
+: cd-ensure-autostart ( -- ) ['] cd-boot 'cold ! ;
+
+: save ( -- )
+  \ Persist the current image to /spiffs/myforth and keep protocol auto-start enabled.
+  cd-ensure-autostart
+  remember
+  s" save" cd-hist-add
+  cd.!ok
+  cd.!end ;
+
+: safe-save ( -- )
+  cd-validate? if
+    cd-backup-saved
+    cd-ensure-autostart
+    remember
+    s" safe-save" cd-hist-add
+    cd.!ok
+  else
+    ." ! fail validate" cr
+  then
+  cd.!end ;
+
+: restart ( -- )
+  ." ! rebooting" cr
+  cd.!end
+  100 ms
+  bye ;
+
+: recover ( -- )
+  \ Factory reset: delete saved images and reboot.
+  cd-myforthz 0 delete-file drop
+  cd-lkgz 0 delete-file drop
+  cd.!ok
+  cd.!end
+  100 ms
+  bye ;
+
+: rollback ( -- )
+  \ Minimal rollback: restore last-known-good saved image (myforth.lkg) then reboot.
+  1 cd-parse-int-or dup 1 <> if
+    drop s" unsupported" cd.#err cd.!end exit
+  then
+  drop
+  cd-lkgz cd-myforthz cd-copy-file ?dup if
+    s" rollback_failed" cd.#err cd.#code cd.!end exit
+  then
+  cd.!ok
+  cd.!end
+  100 ms
+  bye ;
 
 \ Source: decompile key words, prefixing each output line with "! ".
 variable cd-old-type
@@ -264,6 +387,11 @@ create cd-ch 1 allot
   ['] save see-xt
   ['] validate see-xt
   ['] safe-save see-xt
+  ['] restart see-xt
+  ['] recover see-xt
+  ['] rollback see-xt
+  ['] repl see-xt
+  ['] cd-boot see-xt
   ['] cd-node see-xt
 
   cd-old-type @ cd-type-xt!
