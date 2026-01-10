@@ -113,10 +113,11 @@ def main(argv: list[str]) -> int:
         time.sleep(args.settle)
         ser.reset_input_buffer()
 
-        # Synchronize: request a prompt/response and discard it.
-        _send_line(ser, "")
-        _read_until(ser, until.marker if until.name != "end" else b"--> ", args.timeout)
-        ser.reset_input_buffer()
+        # Synchronize only when expecting an interactive prompt.
+        if until.name == "prompt":
+            _send_line(ser, "")
+            _read_until(ser, until.marker, args.timeout)
+            ser.reset_input_buffer()
 
         if args.line is not None:
             ser.reset_input_buffer()

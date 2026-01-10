@@ -44,6 +44,7 @@ example request/response transcripts and any backward-compatibility notes.
 
 - Branches: keep `main` releasable; use short-lived branches like `feat/<area>-<topic>`, `docs/<topic>`,
   `fix/<topic>`, `chore/<topic>`.
+- Workflow: do work on a branch, commit in small logical steps, and merge via PR; avoid rewriting shared history.
 - Commits: use Conventional Commits (e.g., `docs: clarify dump response`, `protocol: add safe-save details`).
 - PRs: include a crisp description, linked context, and at least one real transcript for protocol changes.
   Update both `PROJECT_SPEC.md` and `PROTOCOL_REFERENCE.md` when semantics change.
