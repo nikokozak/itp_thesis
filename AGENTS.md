@@ -20,8 +20,9 @@ Implementation and tooling:
 - Host deps: `python -m venv .venv && . .venv/bin/activate && pip install -r tools/terminal/requirements.txt`
 - Flash ESP32forth (Arduino core pinned in `tools/arduino/arduino-cli.yaml`): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
 - Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
-- Protocol auto-start: run `safe-save` once to persist and enable boot auto-start (`cd-boot`).
-- SAFE mode: hold the GPIO4 button to GND during boot to stay in the interactive `--> ` REPL.
+- Protocol auto-start: run `safe-save` to persist and enable auto-start (`cd-boot`).
+- SAFE mode: hold GPIO4 to GND at boot for `--> ` REPL.
+- Prompt missing: run `also internals 1 arrow ! only forth`.
 - Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
 
 ## Coding Style & Naming Conventions
