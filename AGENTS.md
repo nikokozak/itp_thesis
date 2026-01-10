@@ -1,7 +1,6 @@
 # Repository Guidelines
 
-This thesis repository explores **Computational Dignity**: self-describing embedded nodes (ESP32 + ATtiny)
-that speak a human-readable, line-oriented protocol over UART.
+Thesis repo for **Computational Dignity**: self-describing embedded nodes (ESP32 + ATtiny) over UART.
 
 ## Project Structure & Module Organization
 
@@ -15,14 +14,14 @@ Implementation and tooling:
 - `firmware/esp32/`: ESP32forth baseline + `codignity.fs`
 - `firmware/attiny/`: ATtiny C firmware (planned/ongoing)
 - `tools/terminal/`: serial tooling + transcripts
-- `docs/`: longer notes/diagrams (optional)
 
 ## Build, Test, and Development Commands
 
 - Host deps: `python -m venv .venv && . .venv/bin/activate && pip install -r tools/terminal/requirements.txt`
 - Flash ESP32forth (Arduino core pinned in `tools/arduino/arduino-cli.yaml`): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
 - Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
-- Enter protocol mode: run `cd-node` on the console (disables echo/prompt).
+- Protocol auto-start: run `safe-save` once to persist and enable boot auto-start (`cd-boot`).
+- SAFE mode: hold the GPIO4 button to GND during boot to stay in the interactive `--> ` REPL.
 - Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
 
 ## Coding Style & Naming Conventions
@@ -34,8 +33,7 @@ Implementation and tooling:
 
 ## Testing Guidelines
 
-There are no automated tests yet. For firmware/protocol changes, include a manual test plan in PRs with:
-example request/response transcripts and any backward-compatibility notes.
+No automated tests yet; for protocol changes, include real request/response transcripts in PRs.
 
 ## Planning & TODO Discipline
 

@@ -25,7 +25,8 @@
 | `trace` | `on/off` | — | Enable tracing |
 | `define` | `: word ... ;` | `! ok` | Compile Forth |
 | `save` | — | `! ok` | Persist to flash |
-| `restart` | — | — | Reboot node |
+| `restart` | — | `! rebooting` | Reboot node |
+| `repl` | — | `! ok` | Exit protocol mode to REPL (dev) |
 
 ### Safety Commands (All Nodes)
 
@@ -33,7 +34,7 @@
 |---------|-----------|----------|-------------|
 | `validate` | — | `! ok` or `! fail <reason>` | Check system sanity |
 | `safe-save` | — | `! ok` or `! fail` | Validate then save |
-| `recover` | — | Reboot message | Factory reset (erase user code) |
+| `recover` | — | `! ok` | Factory reset (erase saved image) |
 
 ### Routing
 
