@@ -26,7 +26,7 @@ variable cd-tick
 : cd-submod ( idx n mod -- idx' ) >r swap r@ + swap - r> mod ;
 : cd-adv ( a n -- a' n' ) 1- swap 1+ swap ;
 : cd-drop1 ( a n -- a' n' ) 1- swap 1+ swap ;
-: cd-space? ( c -- f ) dup bl = swap 9 = or ;
+: cd-space? ( c -- f ) dup bl = over 9 = or over 10 = or swap 13 = or ;
 : cd-skip-spaces ( a n -- a' n' )
   begin dup while over c@ cd-space? if cd-adv else exit then repeat ;
 
@@ -65,7 +65,12 @@ variable cd-error-emitted
 : cd-next-ts ( -- u ) cd-tick @ dup 1+ cd-tick ! ;
 : cd-next-sample ( -- value ts ) cd-next-ts dup ;
 
-: 2swap ( a b c d -- c d a b ) rot >r rot r> swap ;
+: 0<> ( n -- f ) 0= 0= ;
+: 0> ( n -- f ) 0 > ;
+: cd-exit postpone exit ; immediate
+
+: 2swap ( a b c d -- c d a b ) rot >r rot r> ;
+: 2over ( a b c d -- a b c d a b ) >r >r 2dup r> r> 2swap ;
 
 : cd-parse-int-or ( default -- n )
   bl parse dup 0= if 2drop exit then
@@ -75,14 +80,7 @@ variable cd-error-emitted
 \ User vocabulary helpers
 
 : cd-wordlist-has? ( a n wl -- f )
-  >r r@ @
-  begin dup nonvoc? while
-    dup >name 2over str= if
-      2drop rdrop drop -1 exit
-    then
-    >link
-  repeat
-  drop 2drop rdrop 0 ;
+  >r r@ @ 0 swap begin dup nonvoc? while dup >name 2over str= if drop drop -1 0 then dup 0<> if >link then repeat drop 2drop rdrop ;
 
 variable cd-define-current
 : cd-define-current-save ( -- ) current @ cd-define-current ! ;
@@ -93,27 +91,26 @@ variable cd-define-current
   n 0= if 0 0 0 0 0 exit then
   a { start }
   0 { len }
-  begin
-    n 0<> while
-      a c@ cd-space? if leave then
-      1 +to len
-      a 1+ to a
-      n 1- to n
-  repeat
-  start len a n -1 ;
+  n 0 ?do
+    a i + c@ cd-space? if leave then
+    1 +to len
+  loop
+  start len start len + n len - -1 ;
 
 : cd-colon-token? ( a n -- f ) 1 = swap c@ [char] : = and ;
+: cd-4drop ( a b c d -- ) 2drop 2drop ;
+: cd-5drop ( a b c d e -- ) drop cd-4drop ;
 
 \ Parse `: name ... ;` from a line and return the `name` token.
 : cd-define-name ( a n -- a n f )
-  cd-token 0= if 0 0 0 exit then      \ a1 n1 aR nR
+  cd-token dup 0= if cd-5drop 0 0 0 exit then drop   \ a1 n1 aR nR
   >r >r
   2dup cd-colon-token? 0= if
     2drop r> r> 2drop 0 0 0 exit
   then
   2drop
-  r> r> cd-token 0= if 2drop 2drop 0 0 0 exit then
-  2drop -1 ;
+  r> r> cd-token dup 0= if cd-5drop 0 0 0 exit then drop
+  cd-4drop -1 ;
 
 \ ------------------------------------------------------------
 \ Files (SPIFFS) helpers
@@ -163,40 +160,267 @@ variable cd-lkg-n
   cd.!end ;
 
 \ ------------------------------------------------------------
-\ History (in-memory ring; persistence TODO)
+\ History (persistent, SPIFFS)
 
-32 constant cd-hist-max
-120 constant cd-hist-maxlen
-cd-hist-maxlen 1+ constant cd-hist-entry
+: cd-history-path$ ( -- a n ) s" /spiffs/codignity.history" ;
+create cd-nl 1 allot
+create cd-sp 1 allot
 
-create cd-hist cd-hist-max cd-hist-entry * allot
-variable cd-hist-head
-variable cd-hist-count
+: cd-now ( -- u ) cd-next-ts ;
 
-: cd-hist-clear ( -- ) 0 cd-hist-head ! 0 cd-hist-count ! ;
-: cd-hist-addr ( idx -- a ) cd-hist-entry * cd-hist + ;
-: cd-hist-write ( a n idx -- )
-  cd-hist-addr >r
-  cd-hist-maxlen cd-min
-  dup r@ c!
+: cd-nl-init ( -- ) 10 cd-nl c! bl cd-sp c! ;
+
+: cd-open-append ( a n -- fid )
+  2dup r/w open-file
+  dup 0<> if
+    drop drop
+    r/w create-file throw
+  else
+    drop -rot 2drop
+  then
+  >r
+  r@ file-size throw r@ reposition-file throw
+  r> ;
+
+: cd-write-nl ( fid -- ) cd-nl 1 rot write-file throw ;
+: cd-write-space ( fid -- ) cd-sp 1 rot write-file throw ;
+: cd-write-u ( u fid -- )
+  >r <# #s #> r> write-file throw ;
+
+: cd-eol? ( c -- f ) dup 10 = swap 13 = or ;
+variable cd-scan-pos
+variable cd-skip-count
+
+: cd-scan-eol ( a n -- i )
+  dup cd-scan-pos !
+  swap >r
+  dup 0 ?do r@ i + c@ cd-eol? if i cd-scan-pos ! leave then loop
+  rdrop
+  cd-scan-pos @ ;
+
+: cd-skip-eol ( a n -- a' n' )
+  0 cd-skip-count !
+  swap >r
+  dup 0 ?do r@ i + c@ cd-eol? 0= if leave then 1 cd-skip-count +! loop
+  r> swap
+  cd-skip-count @ >r
+  swap r@ - swap
+  r@ + rdrop ;
+
+: cd-advance ( a n k -- a' n' ) >r over r@ + swap r> - rot drop ;
+
+variable cd-history-fid
+variable cd-history-size
+variable cd-history-buf
+
+: (cd-history-event) { a n -- }
+  cd-history-path$ cd-open-append { fid }
+  cd-now fid cd-write-u
+  fid cd-write-space
+  a n fid write-file throw
+  fid cd-write-nl
+  fid close-file throw ;
+
+: (cd-history-event+) { ea en pa pn -- }
+  cd-history-path$ cd-open-append { fid }
+  cd-now fid cd-write-u
+  fid cd-write-space
+  ea en fid write-file throw
+  pn 0<> if
+    fid cd-write-space
+    pa pn fid write-file throw
+  then
+  fid cd-write-nl
+  fid close-file throw ;
+
+: cd-history-event ( a n -- ) ['] (cd-history-event) catch drop ;
+: cd-history-event+ ( ea en pa pn -- ) ['] (cd-history-event+) catch drop ;
+
+: (cd-history-event-kv) { ea en ka kn va vn -- }
+  cd-history-path$ cd-open-append { fid }
+  cd-now fid cd-write-u
+  fid cd-write-space
+  ea en fid write-file throw
+  fid cd-write-space
+  ka kn fid write-file throw
+  fid cd-write-space
+  va vn fid write-file throw
+  fid cd-write-nl
+  fid close-file throw ;
+
+: cd-history-event-kv ( ea en ka kn va vn -- ) ['] (cd-history-event-kv) catch drop ;
+
+: history ( -- )
+  cd-history-path$ r/o open-file dup 0<> if drop drop cd.!end exit then
+  drop cd-history-fid !
+  cd-history-fid @ file-size throw cd-history-size !
+  cd-history-size @ 0= if cd-history-fid @ close-file throw cd.!end exit then
+  cd-history-size @ allocate throw cd-history-buf !
+  cd-history-buf @ cd-history-size @ cd-history-fid @ read-file throw drop
+  cd-history-fid @ close-file throw
+
+  cd-history-buf @ cd-history-size @
+  begin dup 0> while
+    2dup cd-scan-eol >r
+    2dup r@ swap drop ." ! " type cr
+    r> cd-advance
+    cd-skip-eol
+  repeat
+  2drop
+  cd-history-buf @ free throw
+  cd.!end ;
+
+\ ------------------------------------------------------------
+\ Metadata (persistent, SPIFFS)
+
+: cd-meta-path$ ( -- a n ) s" /spiffs/codignity.meta" ;
+16 constant cd-meta-max
+16 constant cd-meta-key-max
+32 constant cd-meta-val-max
+cd-meta-key-max 1+ constant cd-meta-key-entry
+cd-meta-val-max 1+ constant cd-meta-val-entry
+
+create cd-meta-keys cd-meta-max cd-meta-key-entry * allot
+create cd-meta-vals cd-meta-max cd-meta-val-entry * allot
+variable cd-meta-count
+variable cd-meta-tka
+variable cd-meta-tkn
+variable cd-meta-tva
+variable cd-meta-tvn
+
+: cd-meta-clear ( -- ) 0 cd-meta-count ! ;
+: cd-meta-kaddr ( idx -- a ) cd-meta-key-entry * cd-meta-keys + ;
+: cd-meta-vaddr ( idx -- a ) cd-meta-val-entry * cd-meta-vals + ;
+: cd-meta-kread ( idx -- a n )
+  cd-meta-kaddr dup c@ swap 1+ swap ;
+: cd-meta-vread ( idx -- a n )
+  cd-meta-vaddr dup c@ swap 1+ swap ;
+: cd-meta-kwrite ( a n idx -- )
+  cd-meta-kaddr >r
+  cd-meta-key-max cd-min dup r@ c!
   r@ 1+ swap cmove
   r> drop ;
-: cd-hist-inc-count ( -- )
-  cd-hist-count @ cd-hist-max < if cd-hist-count @ 1+ cd-hist-count ! then ;
-: cd-hist-add ( a n -- )
-  2dup cd-hist-head @ cd-hist-write
-  cd-hist-head @ 1+ cd-hist-max mod cd-hist-head !
-  cd-hist-inc-count
-  2drop ;
-: cd-hist-oldest ( -- idx )
-  cd-hist-head @ cd-hist-count @ cd-hist-max cd-submod ;
-: cd-hist-read ( idx -- a n )
-  cd-hist-addr dup c@ swap 1+ swap ;
+: cd-meta-vwrite ( a n idx -- )
+  cd-meta-vaddr >r
+  cd-meta-val-max cd-min dup r@ c!
+  r@ 1+ swap cmove
+  r> drop ;
+
+: cd-meta-find { a n -- idx|-1 }
+  cd-meta-count @ 0 ?do
+    i cd-meta-kread a n str= if i unloop exit then
+  loop
+  -1 ;
+
+: cd-meta-set { ka kn va vn -- ok? }
+  ka kn cd-meta-find dup -1 <> if
+    va vn rot cd-meta-vwrite
+    -1 exit
+  then
+  drop
+  cd-meta-count @ cd-meta-max >= if 0 exit then
+  ka kn cd-meta-count @ cd-meta-kwrite
+  va vn cd-meta-count @ cd-meta-vwrite
+  cd-meta-count @ 1+ cd-meta-count !
+  -1 ;
+
+: (cd-meta-save) ( -- )
+  cd-meta-path$ delete-file drop
+  cd-meta-path$ w/o create-file throw { fid }
+  cd-meta-count @ 0 ?do
+    i cd-meta-kread fid write-file throw
+    fid cd-write-space
+    i cd-meta-vread fid write-file throw
+    fid cd-write-nl
+  loop
+  fid close-file throw ;
+
+: cd-meta-save ( -- ok? ) ['] (cd-meta-save) catch 0= ;
+
+: cd-meta-load-buf ( a n -- )
+  begin
+    cd-token dup 0= if cd-5drop exit then drop            \ ka kn aR nR
+    cd-token dup 0= if cd-5drop 2drop exit then drop      \ ka kn va vn aR2 nR2
+    >r >r cd-meta-set drop r> r>
+  again ;
+
+: (cd-meta-load) ( -- )
+  cd-meta-clear
+  cd-meta-path$ r/o open-file dup 0<> if drop drop exit then
+  drop { fid }
+  fid file-size throw { size }
+  size 0= if fid close-file throw exit then
+  size allocate throw { buf }
+  buf size fid read-file throw drop
+  fid close-file throw
+  buf size cd-meta-load-buf
+  buf free throw ;
+
+: cd-meta-load ( -- ) ['] (cd-meta-load) catch drop ;
+
+\ Metadata lookup
+
+: cd-meta-get$ ( ka kn -- va vn f )
+  cd-meta-find dup -1 = if drop 0 0 0 exit then
+  cd-meta-vread -1 ;
+
+: cd-id$ ( -- a n )
+  s" id" cd-meta-get$ dup if
+    drop
+  else
+    drop 2drop
+    s" smart"
+  then ;
+
+: meta ( -- )
+  cd-rest-of-line cd-skip-spaces
+  cd-consume-line
+  dup 0= if
+    2drop
+    cd-meta-count @ 0 ?do
+      ." ! " i cd-meta-kread type space i cd-meta-vread type cr
+    loop
+    cd.!end
+    exit
+  then
+  cd-token dup 0= if cd-5drop s" meta_syntax" cd.#err cd.!end exit then drop  \ ka kn aR nR
+  2swap cd-skip-spaces 2swap                                                     \ ka kn aR' nR'
+  dup 0= if                                                                      \ meta <key>
+    2drop
+    2dup cd-meta-find dup -1 = if
+      drop 2drop
+      s" meta_missing" cd.#err cd.!end exit
+    then
+    >r
+    ." ! " 2dup type space
+    r> cd-meta-vread type cr
+    2drop
+    cd.!end
+    exit
+  then
+  cd-token dup 0= if cd-5drop 2drop s" meta_syntax" cd.#err cd.!end exit then drop  \ ka kn va vn aR2 nR2
+  cd-skip-spaces dup 0<> if
+    2drop 2drop 2drop
+    s" meta_syntax" cd.#err cd.!end exit
+  then
+  2drop                                                                            \ ka kn va vn
+  2dup cd-meta-tvn ! cd-meta-tva !                                                 \ stash value
+  2swap 2dup cd-meta-tkn ! cd-meta-tka ! 2swap                                     \ stash key
+  cd-4drop
+  cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-meta-set 0= if
+    s" meta_full" cd.#err cd.!end exit
+  then
+  cd-meta-save 0= if
+    s" meta_io" cd.#err cd.!end exit
+  then
+  s" meta" cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-history-event-kv
+  cd.!ok
+  cd.!end ;
 
 \ Protocol commands (match PROTOCOL_REFERENCE.md)
 
 : ? ( -- )
-  ." ! id smart" cr
+  ." ! id " cd-id$ type cr
   ." ! mcu esp32" cr
   ." ! ver codignity-0.1" cr
   ." ! fifo " cd-fifo-size . cr
@@ -222,10 +446,10 @@ variable cd-hist-count
   cd.!end ;
 
 : explain ( -- )
-  ." ! I am a smart node running ESP32forth on an ESP32." cr
+  ." ! I am node " cd-id$ type ."  (a smart node running ESP32forth on an ESP32)." cr
   ." ! I speak a human-readable, line-oriented protocol over UART." cr
   ." ! Core commands: ? s n d c" cr
-  ." ! Extended commands: explain source history define save validate safe-save restart recover rollback repl" cr
+  ." ! Extended commands: explain source history define meta save validate safe-save restart recover rollback repl" cr
   ." ! FIFO samples: " cd-fifo-size . cr
   cd.!end ;
 
@@ -241,26 +465,13 @@ variable cd-hist-count
   then
   cd.!end ;
 
-: history ( -- )
-  cd-hist-count @ 0 ?do
-    cd-hist-oldest i + cd-hist-max mod cd-hist-read
-    ." ! " type cr
-  loop
-  cd.!end ;
-
 : define ( -- )
   cd-rest-of-line cd-skip-spaces
-  2dup cd-define-name 0= if
-    s" define_syntax" cd.#err cd.!end cd-consume-line 2drop 2drop exit
-  then
-  2dup cd-user-wordlist cd-wordlist-has? if
-    s" define_exists" cd.#err cd.!end cd-consume-line 2drop 2drop exit
-  then
-  2dup cd-forth-wordlist cd-wordlist-has? if
-    s" define_reserved" cd.#err cd.!end cd-consume-line 2drop 2drop exit
-  then
+  2dup cd-define-name 0= if s" define_syntax" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
+  2dup cd-user-wordlist cd-wordlist-has? if s" define_exists" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
+  2dup cd-forth-wordlist cd-wordlist-has? if s" define_reserved" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
   2drop
-  2dup cd-hist-add
+  2dup s" define" 2swap cd-history-event+
   cd-consume-line
   cd-define-current-save
   cd-user-wordlist current !
@@ -355,7 +566,7 @@ variable cd-old-notfound
   \ Persist the current image to /spiffs/myforth and keep protocol auto-start enabled.
   cd-ensure-autostart
   remember
-  s" save" cd-hist-add
+  s" save" cd-history-event
   cd.!ok
   cd.!end ;
 
@@ -364,7 +575,7 @@ variable cd-old-notfound
     cd-ensure-autostart
     cd-lkg$ save-name
     remember
-    s" safe-save" cd-hist-add
+    s" safe-save" cd-history-event
     cd.!ok
   else
     ." ! fail validate" cr
@@ -374,11 +585,13 @@ variable cd-old-notfound
 : restart ( -- )
   ." ! rebooting" cr
   cd.!end
+  s" restart" cd-history-event
   100 ms
   bye ;
 
 : recover ( -- )
   \ Factory reset: delete saved images and reboot.
+  s" recover" cd-history-event
   cd-myforth$ delete-file drop
   cd-lkg$ delete-file drop
   cd.!ok
@@ -395,6 +608,7 @@ variable cd-old-notfound
   cd-lkg$ cd-file-exists? 0= if
     s" rollback_missing" cd.#err cd.!end exit
   then
+  s" rollback" cd-history-event
   cd.!ok
   cd.!end
   cd-lkg$ restore-name ;
@@ -433,6 +647,7 @@ create cd-ch 1 allot
   ['] explain see-xt
   ['] history see-xt
   ['] define see-xt
+  ['] meta see-xt
   ['] save see-xt
   ['] validate see-xt
   ['] safe-save see-xt
@@ -443,11 +658,16 @@ create cd-ch 1 allot
   ['] cd-boot see-xt
   ['] cd-node see-xt
 
+  cd-user-wordlist @ 0<> if
+    cd-user-wordlist see-vocabulary
+  then
+
   cd-old-type @ cd-type-xt!
   cd.!end ;
 
 cd-clear
-cd-hist-clear
+cd-nl-init
+cd-meta-load
 cd-myforth-build
 cd-lkg-build
 sp0 sp!
