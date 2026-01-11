@@ -1,68 +1,35 @@
 # Repository Guidelines
 
-Thesis repo for **Computational Dignity**: self-describing embedded nodes (ESP32 + ATtiny) over UART.
+Computational Dignity thesis: self-describing embedded nodes (ESP32 smart node + ATtiny dumb nodes) speaking a
+line-oriented UART protocol designed to be readable and maintainable “offline”.
 
-## Project Structure & Module Organization
+## Project Structure
 
-Start here:
-- `PROJECT_SPEC.md`: thesis vision + architecture
-- `PROTOCOL_REFERENCE.md`: protocol syntax + examples
-- `CONTEXT_TRANSFER.md`: “paste into a new chat” project summary
-- `ROADMAP.md`: prioritized implementation milestones
-- `MILESTONE_B_PLAN.md`: Milestone B2 implementation plan
+- Specs/docs: `PROJECT_SPEC.md`, `ROADMAP.md`, `PROTOCOL_REFERENCE.md`
+- ESP32 smart-node (ESP32forth): `firmware/esp32/codignity.fs`
+- Terminal tooling (Python/pyserial): `tools/terminal/`
+- ATtiny dumb-node (C): `firmware/attiny/` (in progress)
 
-Implementation and tooling:
-- `firmware/esp32/`: ESP32forth baseline + `codignity.fs`
-- `firmware/attiny/`: ATtiny C firmware (planned/ongoing)
-- `tools/terminal/`: serial tooling + transcripts
+## Dev Workflow (ESP32)
 
-## Build, Test, and Development Commands
+- Install Python deps (no activation required): `python3 -m venv .venv && .venv/bin/python -m pip install -r tools/terminal/requirements.txt`
+  - Note: `.venv/bin/activate` must be sourced (`source ...`) to affect your shell; executing it won’t persist env changes.
+- Flash ESP32forth (once): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
+- Load/reload `codignity.fs`: `.venv/bin/python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --preline repl --file firmware/esp32/codignity.fs`
+  - Reload-safe: `codignity.fs` begins with a `cd-dev` + `forget` anchor to avoid dictionary-growth crashes.
+- Smoke tests: `.venv/bin/python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"` and `--line "history"`
+- Persist + auto-start: run `safe-save`; SAFE boot pin (GPIO4→GND) forces interactive `--> ` REPL.
+- Avoid `--esp32-reset` unless the board is stuck (it can require a manual reset).
 
-- Host deps: `python -m venv .venv && . .venv/bin/activate && pip install -r tools/terminal/requirements.txt`
-- Flash ESP32forth (Arduino core pinned in `tools/arduino/arduino-cli.yaml`): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
-- Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --preline repl --file firmware/esp32/codignity.fs`
-- Reload during development: re-run the same load command; `firmware/esp32/codignity.fs` starts with a `cd-dev` + `forget` anchor to prevent dictionary growth crashes.
-- Protocol auto-start: run `safe-save` to persist and enable auto-start (`cd-boot`).
-- SAFE mode: hold GPIO4 to GND at boot for `--> ` REPL.
-- Prompt missing: run `also internals 1 arrow ! 1 echo ! only forth`.
-- Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
-- When the board is in protocol mode (no `--> ` prompt), exit to REPL with: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "repl"` (only works once `codignity.fs` is loaded).
-- Avoid `--esp32-reset` unless you’re stuck; it can leave the ESP32 unresponsive until a manual reset.
+## Conventions
 
-## Forth References & Research Workflow
+- Protocol: one request per line; responses may include `# err ...` but must always end with `! end`.
+- TODOs: `TODO(thesis): <concrete next action>`; search with `rg "TODO\\(thesis\\)"`
+- Git: small commits; branches `feat/...`, `fix/...`, `docs/...`; PRs include at least one real transcript for protocol changes.
 
-- Primary local reference: `FORTH_REFERENCE.pdf` (use it to confirm stack effects and core words before guessing).
-- When uncertain about a word’s behavior on this platform, do one of:
-  - Run a tiny on-device probe (e.g., `depth .`, `see <word>`), or
-  - Request approval for network access and consult authoritative docs (Forth-2012 / Gforth / ESP32forth).
-- Capture any “dialect gotchas” in `AGENTS.md` and/or `PROTOCOL_REFERENCE.md` so we don’t rediscover them.
+## Forth References & Research
 
-## Coding Style & Naming Conventions
-
-- Markdown: use ATX headings (`##`), fenced code blocks for transcripts, and keep lines ~100 chars.
-- Protocol literals: wrap commands, pins, and tokens in backticks (e.g., `@name cmd`, `! end`, `# error`).
-- Files: keep high-level docs in `UPPER_SNAKE.md`; use `kebab-case.md` for working notes if added.
-- Code (when added): prefer small files, explicit names, and stable interfaces; no “magic” generators.
-
-## Testing Guidelines
-
-No automated tests yet; for protocol changes, include real request/response transcripts in PRs.
-
-## Planning & TODO Discipline
-
-- For any non-trivial change, write a short, checkable plan (in the PR description, or in a tracking issue).
-- If you stub/skip work, add a `TODO(thesis): ...` with a concrete next action (and link/ID if available).
-  Find them with: `rg "TODO\\(thesis\\)"`
-
-## Version Control & PR Guidelines
-
-- Branches: keep `main` releasable; use short-lived branches like `feat/<area>-<topic>`, `docs/<topic>`,
-  `fix/<topic>`, `chore/<topic>`.
-- Workflow: commit in small steps; merge via PR; avoid rewriting shared history.
-- Commits: Conventional Commits (`chore:`, `docs:`, `feat:`, `fix:`).
-- PRs: include rationale, linked context, and at least one request/response transcript for protocol changes.
-
-## Agent-Specific Notes (Codex CLI)
-
-- Use a skill only when explicitly requested or clearly applicable; available: `skill-creator`, `skill-installer`.
-- Prefer small, targeted file reads and `rg` searches over bulk-loading entire documents.
+- Default reference: `FORTH_REFERENCE.pdf` for stack effects and core words.
+- If unclear, run a tiny on-device probe (`depth .`, `see <word>`) or request network approval to consult
+  Forth-2012 / ESP32forth docs.
+- Document dialect gotchas here (or in `PROTOCOL_REFERENCE.md`) as soon as they’re discovered.
