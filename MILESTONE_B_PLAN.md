@@ -3,6 +3,13 @@
 **Objective:** make the ESP32 smart node’s `?`, `explain`, `source`, and `history` reflect *its persisted state* after
 power-cycling, while keeping the system legible and un-bloated.
 
+## Progress (as implemented)
+
+- Done: `define` compiles into `cd-user` only; rejects redefines and reserved names.
+- Done: `meta` persists key/value pairs to `/spiffs/codignity.meta`; `?` and `explain` derive fields from metadata.
+- Done: `history` is append-only on `/spiffs/codignity.history` and is streamed on read (no “read whole file”).
+- Done: `source` includes protocol words plus `cd-user` enumeration.
+
 ## Scope (what we will implement)
 
 1. **User-only programming boundary**

@@ -19,10 +19,11 @@
 | `explain` | — | Natural language | Full description |
 | `source` | — | Forth listing | Show all code |
 | `history` | — | Modification log | Who changed what |
-| `diff` | `N` | Diff output | Show change N |
+| `meta` | `[key] [value]` | Key/value | Read or set persisted metadata |
+| `diff` | `N` | Diff output | Show change N *(planned)* |
 | `rollback` | `N` | `! ok` | Revert to state N |
-| `scan` | — | Pin analysis | What's connected |
-| `trace` | `on/off` | — | Enable tracing |
+| `scan` | — | Pin analysis | What's connected *(planned)* |
+| `trace` | `on/off` | — | Enable tracing *(planned)* |
 | `define` | `: word ... ;` | `! ok` | Compile Forth |
 | `save` | — | `! ok` | Persist to flash |
 | `restart` | — | `! rebooting` | Reboot node |
@@ -57,11 +58,13 @@
 
 ```
 ! id <name>
+! role <role>
 ! mcu <chip>
 ! ver <version>
 ! fifo <size>
-! pins <list>
-! children <count>      ← smart nodes only
+! units <units>         ← optional (if set via `meta`)
+! pins <pins>           ← optional (if set via `meta`)
+! children <count>
 ! child <n> <bus> <name> <mcu>
 ! end
 ```
@@ -85,10 +88,16 @@
 ### Explain Response (`explain`)
 
 ```
-! I am a <type> sensor node.
-! I sample a <device> on pin <n>.
-! I take a reading every <interval>.
-! ... (natural language continues)
+! id <name>
+! role <role>
+! mcu <chip>
+! ver <version>
+! units <units>         ← optional
+! pins <pins>           ← optional
+! children <count>
+! fifo <size>
+! core <cmd> <cmd> ...
+! extended <cmd> <cmd> ...
 ! end
 ```
 
@@ -104,10 +113,8 @@
 ### History Response (`history`)
 
 ```
-! <timestamp> <source>
-!   <action>: <details>
-! <timestamp> <source>
-!   <action>: <details>
+! <ts> <event> [args...]
+! <ts> <event> [args...]
 ! end
 ```
 

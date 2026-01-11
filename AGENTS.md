@@ -20,13 +20,22 @@ Implementation and tooling:
 
 - Host deps: `python -m venv .venv && . .venv/bin/activate && pip install -r tools/terminal/requirements.txt`
 - Flash ESP32forth (Arduino core pinned in `tools/arduino/arduino-cli.yaml`): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
-- Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
+- Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --preline repl --file firmware/esp32/codignity.fs`
+- Reload during development: re-run the same load command; `firmware/esp32/codignity.fs` starts with a `cd-dev` + `forget` anchor to prevent dictionary growth crashes.
 - Protocol auto-start: run `safe-save` to persist and enable auto-start (`cd-boot`).
 - SAFE mode: hold GPIO4 to GND at boot for `--> ` REPL.
 - Prompt missing: run `also internals 1 arrow ! 1 echo ! only forth`.
 - Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
-- When the board is in protocol mode (no `--> ` prompt), exit to REPL with: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "repl"`
+- When the board is in protocol mode (no `--> ` prompt), exit to REPL with: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "repl"` (only works once `codignity.fs` is loaded).
 - Avoid `--esp32-reset` unless you’re stuck; it can leave the ESP32 unresponsive until a manual reset.
+
+## Forth References & Research Workflow
+
+- Primary local reference: `FORTH_REFERENCE.pdf` (use it to confirm stack effects and core words before guessing).
+- When uncertain about a word’s behavior on this platform, do one of:
+  - Run a tiny on-device probe (e.g., `depth .`, `see <word>`), or
+  - Request approval for network access and consult authoritative docs (Forth-2012 / Gforth / ESP32forth).
+- Capture any “dialect gotchas” in `AGENTS.md` and/or `PROTOCOL_REFERENCE.md` so we don’t rediscover them.
 
 ## Coding Style & Naming Conventions
 
