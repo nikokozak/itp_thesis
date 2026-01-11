@@ -1,5 +1,12 @@
 decimal
 
+\ Reload safety:
+\ Re-sending this file repeatedly grows the dictionary until the ESP32 hard-faults.
+\ We install a small anchor word (`cd-dev`) so each load can `forget` the previous codignity build.
+only forth definitions
+s" cd-dev" find 0<> [if] forget cd-dev [then]
+: cd-dev ( -- ) ;  \ reload anchor (used by `forget` above)
+
 \ ESP32forth hides many useful implementation words in the `internals` vocabulary.
 \ We opt-in so we can build a quiet, protocol-first command loop.
 only forth definitions also internals also interrupts
@@ -11,7 +18,6 @@ only forth definitions also internals also interrupts
 
 vocabulary cd-user
 ' cd-user >body constant cd-user-wordlist
-' forth >body constant cd-forth-wordlist
 
 256 constant cd-fifo-size
 create cd-fifo cd-fifo-size 2* cells allot  \ value, timestamp pairs
@@ -79,23 +85,39 @@ variable cd-error-emitted
 \ ------------------------------------------------------------
 \ User vocabulary helpers
 
-: cd-wordlist-has? ( a n wl -- f )
-  >r r@ @ 0 swap begin dup nonvoc? while dup >name 2over str= if drop drop -1 0 then dup 0<> if >link then repeat drop 2drop rdrop ;
+  \ NOTE: ESP32forth does not provide `search-wordlist` / `get-order`.
+  \ For `define` we use `find` with a fixed search order (see `define`).
 
 variable cd-define-current
 : cd-define-current-save ( -- ) current @ cd-define-current ! ;
 : cd-define-current-restore ( -- ) cd-define-current @ current ! ;
 
-: cd-token { a n -- aTok nTok aRest nRest f }
-  a n cd-skip-spaces to n to a
-  n 0= if 0 0 0 0 0 exit then
-  a { start }
-  0 { len }
-  n 0 ?do
-    a i + c@ cd-space? if leave then
-    1 +to len
-  loop
-  start len start len + n len - -1 ;
+variable cd-define-la
+variable cd-define-ln
+variable cd-define-na
+variable cd-define-nn
+
+variable cd-token-a
+variable cd-token-n
+variable cd-token-len
+
+: cd-token ( a n -- aTok nTok aRest nRest f )
+  cd-skip-spaces
+  dup 0= if 2drop 0 0 0 0 0 exit then
+  2dup cd-token-n ! cd-token-a ! 2drop
+  0 cd-token-len !
+  cd-token-a @ cd-token-n @                           \ aCur nCur
+  begin
+    dup 0> if
+      over c@ cd-space? 0=
+    else
+      0
+    then
+  while
+    cd-adv
+    1 cd-token-len +!
+  repeat
+  cd-token-a @ cd-token-len @ 2swap -1 ;
 
 : cd-colon-token? ( a n -- f ) 1 = swap c@ [char] : = and ;
 : cd-4drop ( a b c d -- ) 2drop 2drop ;
@@ -103,14 +125,12 @@ variable cd-define-current
 
 \ Parse `: name ... ;` from a line and return the `name` token.
 : cd-define-name ( a n -- a n f )
-  cd-token dup 0= if cd-5drop 0 0 0 exit then drop   \ a1 n1 aR nR
-  >r >r
-  2dup cd-colon-token? 0= if
-    2drop r> r> 2drop 0 0 0 exit
-  then
-  2drop
-  r> r> cd-token dup 0= if cd-5drop 0 0 0 exit then drop
-  cd-4drop -1 ;
+  cd-token dup 0= if cd-5drop 0 0 0 exit then drop             \ aTok nTok aR nR
+  2over cd-colon-token? 0= if 2drop 2drop 0 0 0 exit then
+  2swap 2drop                                                   \ aR nR
+  cd-token dup 0= if cd-5drop 0 0 0 exit then drop              \ aName nName aR2 nR2
+  2drop                                                         \ aName nName
+  -1 ;
 
 \ ------------------------------------------------------------
 \ Files (SPIFFS) helpers
@@ -187,31 +207,25 @@ create cd-sp 1 allot
 : cd-write-u ( u fid -- )
   >r <# #s #> r> write-file throw ;
 
+160 constant cd-history-line-max
+create cd-history-line cd-history-line-max allot
+variable cd-history-ln
+create cd-history-ch 1 allot
+
 : cd-eol? ( c -- f ) dup 10 = swap 13 = or ;
-variable cd-scan-pos
-variable cd-skip-count
+: cd-history-line-clear ( -- ) 0 cd-history-ln ! ;
+: cd-history-line-flush ( -- )
+  cd-history-ln @ dup 0> if
+    ." ! " cd-history-line swap type cr
+  else
+    drop
+  then
+  cd-history-line-clear ;
 
-: cd-scan-eol ( a n -- i )
-  dup cd-scan-pos !
-  swap >r
-  dup 0 ?do r@ i + c@ cd-eol? if i cd-scan-pos ! leave then loop
-  rdrop
-  cd-scan-pos @ ;
-
-: cd-skip-eol ( a n -- a' n' )
-  0 cd-skip-count !
-  swap >r
-  dup 0 ?do r@ i + c@ cd-eol? 0= if leave then 1 cd-skip-count +! loop
-  r> swap
-  cd-skip-count @ >r
-  swap r@ - swap
-  r@ + rdrop ;
-
-: cd-advance ( a n k -- a' n' ) >r over r@ + swap r> - rot drop ;
-
-variable cd-history-fid
-variable cd-history-size
-variable cd-history-buf
+: cd-history-line-add ( c -- )
+  cd-history-ln @ cd-history-line-max >= if cd-history-line-flush then
+  cd-history-line cd-history-ln @ + c!
+  1 cd-history-ln +! ;
 
 : (cd-history-event) { a n -- }
   cd-history-path$ cd-open-append { fid }
@@ -252,22 +266,21 @@ variable cd-history-buf
 
 : history ( -- )
   cd-history-path$ r/o open-file dup 0<> if drop drop cd.!end exit then
-  drop cd-history-fid !
-  cd-history-fid @ file-size throw cd-history-size !
-  cd-history-size @ 0= if cd-history-fid @ close-file throw cd.!end exit then
-  cd-history-size @ allocate throw cd-history-buf !
-  cd-history-buf @ cd-history-size @ cd-history-fid @ read-file throw drop
-  cd-history-fid @ close-file throw
-
-  cd-history-buf @ cd-history-size @
-  begin dup 0> while
-    2dup cd-scan-eol >r
-    2dup r@ swap drop ." ! " type cr
-    r> cd-advance
-    cd-skip-eol
+  drop { fid }
+  cd-history-line-clear
+  begin
+    cd-history-ch 1 fid read-file throw dup
+  while
+    drop
+    cd-history-ch c@ dup cd-eol? if
+      drop cd-history-line-flush
+    else
+      cd-history-line-add
+    then
   repeat
-  2drop
-  cd-history-buf @ free throw
+  drop
+  cd-history-line-flush
+  fid close-file throw
   cd.!end ;
 
 \ ------------------------------------------------------------
@@ -372,6 +385,38 @@ variable cd-meta-tvn
     s" smart"
   then ;
 
+: cd-role$ ( -- a n )
+  s" role" cd-meta-get$ dup if
+    drop
+  else
+    drop 2drop
+    s" smart"
+  then ;
+
+: cd-ver$ ( -- a n )
+  s" ver" cd-meta-get$ dup if
+    drop
+  else
+    drop 2drop
+    s" codignity-0.1"
+  then ;
+
+: cd-children$ ( -- a n )
+  s" children" cd-meta-get$ dup if
+    drop
+  else
+    drop 2drop
+    s" 0"
+  then ;
+
+: cd.!meta-if { ka kn la ln -- }
+  ka kn cd-meta-get$ dup if
+    drop
+    ." ! " la ln type space type cr
+  else
+    drop 2drop
+  then ;
+
 : meta ( -- )
   cd-rest-of-line cd-skip-spaces
   cd-consume-line
@@ -421,10 +466,13 @@ variable cd-meta-tvn
 
 : ? ( -- )
   ." ! id " cd-id$ type cr
+  ." ! role " cd-role$ type cr
   ." ! mcu esp32" cr
-  ." ! ver codignity-0.1" cr
+  ." ! ver " cd-ver$ type cr
   ." ! fifo " cd-fifo-size . cr
-  ." ! children 0" cr
+  s" units" 2dup cd.!meta-if
+  s" pins" 2dup cd.!meta-if
+  ." ! children " cd-children$ type cr
   cd.!end ;
 
 : s ( -- )
@@ -446,11 +494,16 @@ variable cd-meta-tvn
   cd.!end ;
 
 : explain ( -- )
-  ." ! I am node " cd-id$ type ."  (a smart node running ESP32forth on an ESP32)." cr
-  ." ! I speak a human-readable, line-oriented protocol over UART." cr
-  ." ! Core commands: ? s n d c" cr
-  ." ! Extended commands: explain source history define meta save validate safe-save restart recover rollback repl" cr
-  ." ! FIFO samples: " cd-fifo-size . cr
+  ." ! id " cd-id$ type cr
+  ." ! role " cd-role$ type cr
+  ." ! mcu esp32" cr
+  ." ! ver " cd-ver$ type cr
+  s" units" 2dup cd.!meta-if
+  s" pins" 2dup cd.!meta-if
+  ." ! children " cd-children$ type cr
+  ." ! fifo " cd-fifo-size . cr
+  ." ! core ? s n d c" cr
+  ." ! extended explain source history define meta save validate safe-save restart recover rollback repl" cr
   cd.!end ;
 
 : cd-validate? ( -- f )
@@ -467,15 +520,23 @@ variable cd-meta-tvn
 
 : define ( -- )
   cd-rest-of-line cd-skip-spaces
-  2dup cd-define-name 0= if s" define_syntax" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
-  2dup cd-user-wordlist cd-wordlist-has? if s" define_exists" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
-  2dup cd-forth-wordlist cd-wordlist-has? if s" define_reserved" cd.#err cd.!end cd-consume-line 2drop 2drop cd-exit then
+  2dup cd-define-ln ! cd-define-la ! 2drop
+  cd-define-la @ cd-define-ln @ cd-define-name 0= if
+    s" define_syntax" cd.#err cd.!end cd-consume-line 2drop cd-exit
+  then
+  2dup cd-define-nn ! cd-define-na !
   2drop
-  2dup s" define" 2swap cd-history-event+
+
+  \ Reject redefining any existing word (new words only).
+  cd-define-na @ cd-define-nn @ find 0<> if
+    s" define_exists" cd.#err cd.!end cd-consume-line cd-exit
+  then
+
+  s" define" cd-define-na @ cd-define-nn @ cd-history-event+
   cd-consume-line
   cd-define-current-save
   cd-user-wordlist current !
-  evaluate
+  cd-define-la @ cd-define-ln @ evaluate
   cd-define-current-restore
   cd.!ok
   cd.!end ;
@@ -673,4 +734,4 @@ cd-lkg-build
 sp0 sp!
 fp0 fp!
 
-only forth definitions also cd-user
+only forth definitions cd-user
