@@ -140,23 +140,26 @@ def main(argv: list[str]) -> int:
 
         # Synchronize only when expecting an interactive prompt.
         if until.name == "prompt":
-            if args.preline:
+            # Avoid sending a blank line: some Forth consoles repeat the last command on empty input.
+            _send_line(ser, "sp0 sp!")
+            buf, found = _read_until(ser, until.marker, args.timeout)
+            if _looks_fatal(buf):
+                print("Device reported ERROR/Guru while syncing prompt; aborting.", file=sys.stderr)
+                return 2
+            if not found and args.preline:
                 _send_line(ser, args.preline)
-                _, found = _read_until(ser, until.marker, args.timeout)
+                buf, found = _read_until(ser, until.marker, args.timeout)
+                if _looks_fatal(buf):
+                    print("Device reported ERROR/Guru while running --preline; aborting.", file=sys.stderr)
+                    return 2
                 if not found:
                     print(
                         f"Timed out waiting for prompt marker after --preline: {until.marker!r}",
                         file=sys.stderr,
                     )
                     return 2
-                ser.reset_input_buffer()
-            _send_line(ser, "")
-            _, found = _read_until(ser, until.marker, args.timeout)
             if not found:
-                print(
-                    f"Timed out waiting for prompt marker: {until.marker!r}",
-                    file=sys.stderr,
-                )
+                print(f"Timed out waiting for prompt marker: {until.marker!r}", file=sys.stderr)
                 return 2
             ser.reset_input_buffer()
 
