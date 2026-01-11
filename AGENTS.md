@@ -23,8 +23,10 @@ Implementation and tooling:
 - Load protocol words: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until prompt --file firmware/esp32/codignity.fs`
 - Protocol auto-start: run `safe-save` to persist and enable auto-start (`cd-boot`).
 - SAFE mode: hold GPIO4 to GND at boot for `--> ` REPL.
-- Prompt missing: run `also internals 1 arrow ! only forth`.
+- Prompt missing: run `also internals 1 arrow ! 1 echo ! only forth`.
 - Smoke-test: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "?"`
+- When the board is in protocol mode (no `--> ` prompt), exit to REPL with: `. .venv/bin/activate && python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "repl"`
+- Avoid `--esp32-reset` unless you’re stuck; it can leave the ESP32 unresponsive until a manual reset.
 
 ## Coding Style & Naming Conventions
 
