@@ -6,6 +6,7 @@ line-oriented UART protocol designed to be readable and maintainable â€œofflineâ
 ## Project Structure
 
 - Specs/docs: `PROJECT_SPEC.md`, `ROADMAP.md`, `PROTOCOL_REFERENCE.md`
+- Milestone C (CLI/TUI plan): `MILESTONE_C_CLI_PLAN.md` (temporary implementation spec)
 - ESP32 smart-node (ESP32forth): `firmware/esp32/codignity.fs`
 - Terminal tooling (Python/pyserial): `tools/terminal/`
 - ATtiny dumb-node (C): `firmware/attiny/` (in progress)
