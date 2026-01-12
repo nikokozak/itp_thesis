@@ -34,6 +34,13 @@ from codignity.protocol import (
     is_error,
 )
 from codignity.transcript import Transcript, NullTranscript
+from codignity.snapshot import (
+    Snapshot,
+    SnapshotDiff,
+    compute_diff,
+    format_diff,
+    extract_def_name,
+)
 
 if TYPE_CHECKING:
     from codignity.transcript import Transcript as TranscriptType
@@ -339,6 +346,518 @@ def cmd_identity(args: argparse.Namespace) -> int:
     return cmd_simple_protocol(args, "?")
 
 
+def cmd_load(args: argparse.Namespace) -> int:
+    """Handle the `load` subcommand - load Codignity firmware."""
+    # Resolve firmware path relative to repo root
+    if args.file:
+        firmware_path = Path(args.file)
+    else:
+        # Default: firmware/esp32/codignity.fs relative to repo root
+        repo_root = _this_dir.parent.parent
+        firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+
+    if not firmware_path.exists():
+        print(f"Error: Firmware file not found: {firmware_path}", file=sys.stderr)
+        return 1
+
+    try:
+        # Use short settle (2s) to interrupt autoexec and get clean REPL
+        # ESP32forth's autoexec waits ~3s, so 2s settle + sending input interrupts it
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=2.0,  # Short settle to interrupt autoexec
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                # Step 1: Interrupt autoexec and get REPL prompt
+                transcript.record_comment("Interrupting autoexec to enter REPL...")
+                print("Entering REPL mode...")
+
+                # Send empty line to interrupt autoexec
+                session.send_line("")
+                result = session.read_until(b" ok", args.timeout)
+                if not result.found:
+                    # Try again with stack reset
+                    session.send_line("sp0 sp!")
+                    result = session.read_until(b" ok", args.timeout)
+
+                if not result.found:
+                    print(
+                        "Error: Could not enter REPL mode.\n"
+                        "Try: Hold SAFE + press EN to stay in REPL.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                session.drain(0.2)  # Clear any remaining output
+
+                # Step 2: Load firmware line by line
+                transcript.record_comment(f"Loading {firmware_path.name}...")
+                print(f"Loading {firmware_path}...")
+
+                with open(firmware_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                total_lines = len(lines)
+                loaded = 0
+                errors = 0
+
+                for i, line in enumerate(lines):
+                    line = line.rstrip("\n\r")
+
+                    # Skip empty lines and comments
+                    if not line.strip() or line.strip().startswith("\\"):
+                        continue
+
+                    # Send line and wait for ok
+                    if not args.no_mute:
+                        # Show progress
+                        pct = (i + 1) * 100 // total_lines
+                        print(f"\r  [{pct:3d}%] {loaded} lines loaded...", end="", flush=True)
+                    else:
+                        transcript.record_sent(line)
+
+                    try:
+                        response = session.send_repl(line, timeout_s=args.timeout)
+                        if not args.no_mute:
+                            pass  # Muted
+                        else:
+                            transcript.record_received(response)
+                            print(response, end="")
+                        loaded += 1
+                    except SerialError as e:
+                        errors += 1
+                        print(f"\nError at line {i+1}: {e}", file=sys.stderr)
+                        print(f"  Line: {line[:60]}...", file=sys.stderr)
+                        if errors > 3:
+                            print("Too many errors, aborting.", file=sys.stderr)
+                            return 1
+
+                print(f"\r  [100%] {loaded} lines loaded.    ")
+
+                # Step 3: Enter protocol mode with revive
+                transcript.record_comment("Entering protocol mode...")
+                print("Entering protocol mode...")
+                session.send_line("revive")
+                result = session.read_until(b" ok", args.timeout)
+                if not result.found:
+                    print("Warning: revive did not return ok", file=sys.stderr)
+
+                session.drain(0.3)
+
+                # Step 4: Validate
+                transcript.record_comment("Validating...")
+                print("Validating...")
+                transcript.record_sent("validate")
+                response = session.send_protocol("validate", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Validation failed: {error_msg}", file=sys.stderr)
+                    return 1
+
+                if "! ok" in response:
+                    print("Validation passed.")
+                else:
+                    print(f"Unexpected validation response: {response}", file=sys.stderr)
+                    return 1
+
+                # Step 5: Persist if requested
+                if args.persist:
+                    transcript.record_comment("Persisting with safe-save...")
+                    print("Running safe-save...")
+                    transcript.record_sent("safe-save")
+                    response = session.send_protocol("safe-save", timeout_s=args.timeout)
+                    transcript.record_received(response)
+
+                    has_error, error_msg = is_error(response)
+                    if has_error:
+                        print(f"safe-save failed: {error_msg}", file=sys.stderr)
+                        return 1
+
+                    print("Saved to flash.")
+
+                    transcript.record_comment("Restarting...")
+                    print("Restarting...")
+                    transcript.record_sent("restart")
+                    response = session.send_protocol("restart", timeout_s=args.timeout)
+                    transcript.record_received(response)
+                    print("Device restarting.")
+
+                print("Load complete.")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_snapshot_create(args: argparse.Namespace) -> int:
+    """Handle the `snapshot create` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print(
+                        "Error: Could not enter protocol mode.\n"
+                        "Is Codignity loaded? Try `probe` first.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                # Get identity info
+                transcript.record_sent("?")
+                response = session.send_protocol("?", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                # Parse identity
+                identity: dict[str, str] = {}
+                for line in response.splitlines():
+                    line = line.strip()
+                    if line.startswith("! ") and line != "! end":
+                        parts = line[2:].split(None, 1)
+                        if len(parts) >= 1:
+                            key = parts[0]
+                            value = parts[1] if len(parts) > 1 else ""
+                            identity[key] = value
+
+                # Get all meta
+                transcript.record_sent("meta")
+                response = session.send_protocol("meta", timeout_s=args.timeout)
+                transcript.record_received(response)
+                meta = parse_meta_dump(response)
+
+                # Get defs from file if provided
+                defs: list[str] = []
+                if args.defs:
+                    defs_path = Path(args.defs)
+                    if not defs_path.exists():
+                        print(f"Error: Defs file not found: {defs_path}", file=sys.stderr)
+                        return 1
+                    with open(defs_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#"):
+                                # Ensure it's a define command
+                                if line.startswith("define"):
+                                    defs.append(line)
+                                elif line.startswith(":"):
+                                    defs.append(f"define {line}")
+
+                # Create snapshot
+                snapshot = Snapshot.create_now(
+                    node_id=identity.get("id"),
+                    role=identity.get("role"),
+                    ver=identity.get("ver"),
+                    meta=meta,
+                    defs=defs,
+                    notes={},
+                )
+
+                # Optionally run safe-save before snapshot
+                if args.save_first:
+                    transcript.record_comment("Running safe-save before snapshot...")
+                    print("Running safe-save...")
+                    transcript.record_sent("safe-save")
+                    response = session.send_protocol("safe-save", timeout_s=args.timeout)
+                    transcript.record_received(response)
+
+                    has_error, error_msg = is_error(response)
+                    if has_error:
+                        print(f"safe-save failed: {error_msg}", file=sys.stderr)
+                        return 1
+
+                    snapshot.notes["safe-save"] = "ok"
+
+                # Save snapshot
+                out_path = Path(args.out)
+                snapshot.save(out_path)
+
+                print(f"Snapshot saved to: {out_path}")
+                print(f"  Node: {snapshot.node_id or 'unknown'}")
+                print(f"  Role: {snapshot.role or 'unknown'}")
+                print(f"  Meta keys: {len(snapshot.meta)}")
+                print(f"  Defs: {len(snapshot.defs)}")
+
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_snapshot_restore(args: argparse.Namespace) -> int:
+    """Handle the `snapshot restore` subcommand."""
+    # Load snapshot file first
+    snap_path = Path(args.input)
+    if not snap_path.exists():
+        print(f"Error: Snapshot file not found: {snap_path}", file=sys.stderr)
+        return 1
+
+    try:
+        snapshot = Snapshot.load(snap_path)
+    except ValueError as e:
+        print(f"Error parsing snapshot: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Loaded snapshot: {snap_path}")
+    print(f"  Date: {snapshot.date}")
+    print(f"  Node: {snapshot.node_id or 'unknown'}")
+    print(f"  Role: {snapshot.role or 'unknown'}")
+    print(f"  Meta keys: {len(snapshot.meta)}")
+    print(f"  Defs: {len(snapshot.defs)}")
+
+    # Confirm unless --yes
+    if not args.yes:
+        print("\nThis will:")
+        print("  1. Load Codignity firmware (interrupts autoexec)")
+        print("  2. Apply all meta set commands")
+        print("  3. Apply all define commands")
+        print("  4. Validate")
+        print("  5. Run safe-save and restart")
+        print("\nContinue? [y/N] ", end="", flush=True)
+        response = input().strip().lower()
+        if response not in ("y", "yes"):
+            print("Aborted.")
+            return 0
+
+    try:
+        # Use short settle to interrupt autoexec
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=2.0,  # Short settle to interrupt autoexec
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                # Step 1: Get into REPL mode
+                transcript.record_comment("Interrupting autoexec to enter REPL...")
+                print("Entering REPL mode...")
+
+                session.send_line("")
+                result = session.read_until(b" ok", args.timeout)
+                if not result.found:
+                    session.send_line("sp0 sp!")
+                    result = session.read_until(b" ok", args.timeout)
+
+                if not result.found:
+                    print(
+                        "Error: Could not enter REPL mode.\n"
+                        "Try: Hold SAFE + press EN to stay in REPL.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                session.drain(0.2)
+
+                # Step 2: Load Codignity firmware
+                repo_root = _this_dir.parent.parent
+                firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+
+                if not firmware_path.exists():
+                    print(f"Error: Firmware not found: {firmware_path}", file=sys.stderr)
+                    return 1
+
+                transcript.record_comment(f"Loading {firmware_path.name}...")
+                print(f"Loading {firmware_path.name}...")
+
+                with open(firmware_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                total_lines = len(lines)
+                loaded = 0
+
+                for i, line in enumerate(lines):
+                    line = line.rstrip("\n\r")
+                    if not line.strip() or line.strip().startswith("\\"):
+                        continue
+
+                    pct = (i + 1) * 100 // total_lines
+                    print(f"\r  [{pct:3d}%] {loaded} lines loaded...", end="", flush=True)
+
+                    try:
+                        session.send_repl(line, timeout_s=args.timeout)
+                        loaded += 1
+                    except SerialError as e:
+                        print(f"\nError loading firmware: {e}", file=sys.stderr)
+                        print("Aborting restore (no changes persisted).", file=sys.stderr)
+                        return 1
+
+                print(f"\r  [100%] {loaded} lines loaded.    ")
+
+                # Step 3: Enter protocol mode
+                transcript.record_comment("Entering protocol mode...")
+                print("Entering protocol mode...")
+                session.send_line("revive")
+                result = session.read_until(b" ok", args.timeout)
+                if not result.found or b"not found" in result.data.lower():
+                    print(
+                        "Error: Could not enter protocol mode.\n"
+                        "Try: Hold SAFE + press EN to stay in REPL, then run `revive`.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                session.drain(0.3)
+
+                # Step 4: Apply meta set commands
+                if snapshot.meta:
+                    transcript.record_comment("Applying meta settings...")
+                    print(f"Applying {len(snapshot.meta)} meta settings...")
+
+                    for key, value in snapshot.meta.items():
+                        cmd = f"meta {key} {value}"
+                        transcript.record_sent(cmd)
+                        response = session.send_protocol(cmd, timeout_s=args.timeout)
+                        transcript.record_received(response)
+
+                        has_error, error_msg = is_error(response)
+                        if has_error:
+                            print(f"\nError setting meta {key}: {error_msg}", file=sys.stderr)
+                            print("Aborting restore (no changes persisted).", file=sys.stderr)
+                            return 1
+
+                # Step 5: Apply define commands
+                if snapshot.defs:
+                    transcript.record_comment("Applying definitions...")
+                    print(f"Applying {len(snapshot.defs)} definitions...")
+
+                    for defn in snapshot.defs:
+                        # Ensure it starts with "define"
+                        if not defn.startswith("define"):
+                            defn = f"define {defn}"
+
+                        transcript.record_sent(defn)
+                        response = session.send_protocol(defn, timeout_s=args.timeout)
+                        transcript.record_received(response)
+
+                        has_error, error_msg = is_error(response)
+                        if has_error:
+                            name = extract_def_name(defn) or defn[:40]
+                            print(f"\nError defining {name}: {error_msg}", file=sys.stderr)
+                            print("Aborting restore (no changes persisted).", file=sys.stderr)
+                            return 1
+
+                # Step 6: Validate
+                transcript.record_comment("Validating...")
+                print("Validating...")
+                transcript.record_sent("validate")
+                response = session.send_protocol("validate", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Validation failed: {error_msg}", file=sys.stderr)
+                    print("Aborting restore (no changes persisted).", file=sys.stderr)
+                    return 1
+
+                if "! ok" not in response:
+                    print(f"Unexpected validation response: {response}", file=sys.stderr)
+                    return 1
+
+                print("Validation passed.")
+
+                # Step 7: safe-save
+                transcript.record_comment("Persisting with safe-save...")
+                print("Running safe-save...")
+                transcript.record_sent("safe-save")
+                response = session.send_protocol("safe-save", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"safe-save failed: {error_msg}", file=sys.stderr)
+                    return 1
+
+                print("Saved to flash.")
+
+                # Step 8: restart
+                transcript.record_comment("Restarting...")
+                print("Restarting...")
+                transcript.record_sent("restart")
+                response = session.send_protocol("restart", timeout_s=args.timeout)
+                transcript.record_received(response)
+                print("Device restarting.")
+
+                print("\nRestore complete.")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_snapshot_diff(args: argparse.Namespace) -> int:
+    """Handle the `snapshot diff` subcommand."""
+    # Load snapshot file first
+    snap_path = Path(args.input)
+    if not snap_path.exists():
+        print(f"Error: Snapshot file not found: {snap_path}", file=sys.stderr)
+        return 1
+
+    try:
+        snapshot = Snapshot.load(snap_path)
+    except ValueError as e:
+        print(f"Error parsing snapshot: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print(
+                        "Error: Could not enter protocol mode.\n"
+                        "Is Codignity loaded? Try `probe` first.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                # Get live meta
+                transcript.record_sent("meta")
+                response = session.send_protocol("meta", timeout_s=args.timeout)
+                transcript.record_received(response)
+                live_meta = parse_meta_dump(response)
+
+                # Get live defs (from source command)
+                transcript.record_sent("source")
+                response = session.send_protocol("source", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                # Parse define names from source output
+                # Format is "! : name  body ;" for each definition
+                live_defs: list[str] = []
+                for line in response.splitlines():
+                    line = line.strip()
+                    if line.startswith("! : "):
+                        # Format: "! : <name>  <body>"
+                        rest = line[4:].strip()
+                        # Name is the first token
+                        parts = rest.split(None, 1)
+                        if parts:
+                            live_defs.append(parts[0])
+
+                # Compute diff
+                diff = compute_diff(snapshot, live_meta, live_defs)
+
+                print(f"Comparing snapshot ({snap_path.name}) vs live node:")
+                print(f"  Snapshot: {snapshot.node_id or 'unknown'} @ {snapshot.date}")
+                print()
+                print(format_diff(diff))
+
+                return 0 if not diff.has_differences else 1
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 # ---- Main ----
 
 
@@ -409,7 +928,75 @@ def main(argv: list[str] | None = None) -> int:
     add_common_args(p_identity)
     p_identity.set_defaults(func=cmd_identity)
 
-    # TODO(thesis): Add load, snapshot subcommands in Phase 2/3
+    # load
+    p_load = subparsers.add_parser("load", help="Load Codignity firmware onto device")
+    add_common_args(p_load)
+    p_load.add_argument(
+        "--file",
+        type=Path,
+        help="Firmware file path (default: firmware/esp32/codignity.fs)",
+    )
+    p_load.add_argument(
+        "--persist",
+        action="store_true",
+        help="Run safe-save and restart after loading",
+    )
+    p_load.add_argument(
+        "--no-mute",
+        action="store_true",
+        help="Show all output (normally muted for cleaner progress)",
+    )
+    p_load.set_defaults(func=cmd_load)
+
+    # snapshot (with subcommands: create, restore, diff)
+    p_snapshot = subparsers.add_parser("snapshot", help="Snapshot/restore node state")
+    snapshot_sub = p_snapshot.add_subparsers(dest="snapshot_cmd", required=True)
+
+    # snapshot create
+    p_snap_create = snapshot_sub.add_parser("create", help="Create snapshot of node state")
+    add_common_args(p_snap_create)
+    p_snap_create.add_argument(
+        "--out", "-o",
+        required=True,
+        help="Output snapshot file path (.cdsnap)",
+    )
+    p_snap_create.add_argument(
+        "--defs",
+        help="File containing define commands to include",
+    )
+    p_snap_create.add_argument(
+        "--save-first",
+        action="store_true",
+        help="Run safe-save before creating snapshot",
+    )
+    p_snap_create.set_defaults(func=cmd_snapshot_create)
+
+    # snapshot restore
+    p_snap_restore = snapshot_sub.add_parser("restore", help="Restore node from snapshot")
+    add_common_args(p_snap_restore)
+    p_snap_restore.add_argument(
+        "--in", "-i",
+        dest="input",
+        required=True,
+        help="Snapshot file to restore from",
+    )
+    p_snap_restore.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
+    p_snap_restore.set_defaults(func=cmd_snapshot_restore)
+
+    # snapshot diff
+    p_snap_diff = snapshot_sub.add_parser("diff", help="Compare live node vs snapshot")
+    add_common_args(p_snap_diff)
+    p_snap_diff.add_argument(
+        "--in", "-i",
+        dest="input",
+        required=True,
+        help="Snapshot file to compare against",
+    )
+    p_snap_diff.set_defaults(func=cmd_snapshot_diff)
 
     args = parser.parse_args(argv)
     return args.func(args)
