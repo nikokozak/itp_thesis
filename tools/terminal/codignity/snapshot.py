@@ -255,6 +255,11 @@ def extract_def_name(define_line: str) -> str | None:
 def load_baseline_defs(firmware_path: Path) -> set[str]:
     """Extract word names defined in the Codignity firmware source.
 
+    "Baseline/core" here means words shipped by Codignity (our firmware sources,
+    typically `firmware/esp32/codignity.fs`), not ESP32forth's built-in kernel
+    words. The CLI uses this set to suppress diff noise so `snapshot diff`
+    focuses on user-defined words.
+
     Parses lines starting with `: name` (Forth word definitions) to build
     a set of baseline/core word names that should be excluded from diffs.
 
@@ -264,27 +269,44 @@ def load_baseline_defs(firmware_path: Path) -> set[str]:
     Returns:
         Set of word names defined in the firmware.
     """
-    if not firmware_path.exists():
-        return set()
+    def strip_inline_comment(s: str) -> str:
+        # Forth `\` comments out the rest of the line.
+        return s.split("\\", 1)[0].strip()
 
-    baseline: set[str] = set()
+    def parse_file(path: Path, seen: set[Path]) -> set[str]:
+        if path in seen:
+            return set()
+        seen.add(path)
+        if not path.exists():
+            return set()
 
-    try:
-        with open(firmware_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                # Skip comments and empty lines
-                if not line or line.startswith("\\"):
-                    continue
+        defs: set[str] = set()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = strip_inline_comment(raw_line)
+                    if not line:
+                        continue
 
-                # Look for word definitions: `: name ...`
-                match = re.match(r":\s+(\S+)", line)
-                if match:
-                    baseline.add(match.group(1))
-    except Exception:
-        return set()
+                    # Best-effort support for modular firmware layouts:
+                    # follow `include <path>` lines relative to the current file.
+                    lowered = line.lower()
+                    if lowered.startswith("include ") or lowered.startswith("included "):
+                        _, rest = line.split(None, 1)
+                        include_rel = rest.strip().strip("\"'")  # tolerate quotes
+                        if include_rel:
+                            defs |= parse_file((path.parent / include_rel), seen)
+                        continue
 
-    return baseline
+                    match = re.match(r":\s+(\S+)", line)
+                    if match:
+                        defs.add(match.group(1))
+        except Exception:
+            return set()
+
+        return defs
+
+    return parse_file(firmware_path, set())
 
 
 @dataclass
