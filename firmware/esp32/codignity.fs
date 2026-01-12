@@ -577,7 +577,11 @@ variable cd-old-arrow
 variable cd-old-notfound
 
 : repl ( -- )
+  -1 cd-old-echo !
+  -1 cd-old-arrow !
   -1 cd-exit !
+  -1 echo !
+  -1 arrow !
   cd.!ok
   cd.!end ;
 
@@ -592,15 +596,18 @@ variable cd-old-notfound
   cd-error-reset
   ['] cd-notfound 'notfound !
   begin
-    ['] evaluate-buffer catch ?dup if
-      0 state ! sp0 sp! fp0 fp! rp0 rp!
-      cd-handle-exception
-    then
-    cd-exit @ 0= if
-      refill drop
-      0
-    else
+    cd-exit @ 0<> if
       -1
+    else
+      refill 0= if
+        10 ms
+      else
+        ['] evaluate-buffer catch ?dup if
+          0 state ! sp0 sp! fp0 fp! rp0 rp!
+          cd-handle-exception
+        then
+      then
+      0
     then
   until
   cd-old-notfound @ 'notfound !
@@ -616,6 +623,8 @@ variable cd-old-notfound
 : cd-boot ( -- )
   cd-safe-setup
   cd-safe-pressed? if
+    -1 echo !
+    -1 arrow !
     ." SAFE: pressed; staying in REPL" cr
   else
     cd-node
