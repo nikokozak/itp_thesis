@@ -49,6 +49,8 @@ class Action(Enum):
     META = auto()
     HISTORY = auto()
     SOURCE = auto()
+    EXPLAIN = auto()
+    IDENTITY = auto()
     LOAD = auto()
     SNAPSHOT = auto()
     RESTORE = auto()
@@ -93,6 +95,8 @@ def create_main_menu(state: AppState) -> Menu:
 
     items = [
         MenuItem("Probe Device", "p", enabled=True),
+        MenuItem("Identity (?)", "i", enabled=connected),
+        MenuItem("Explain", "e", enabled=connected),
         MenuItem("Meta Dump", "m", enabled=connected),
         MenuItem("History", "h", enabled=connected),
         MenuItem("Source", "s", enabled=connected),
@@ -111,6 +115,8 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
     """Map menu selection key to action."""
     key_map = {
         "p": Action.PROBE,
+        "i": Action.IDENTITY,
+        "e": Action.EXPLAIN,
         "m": Action.META,
         "h": Action.HISTORY,
         "s": Action.SOURCE,
@@ -202,6 +208,24 @@ def io_worker(state: AppState) -> None:
                     else:
                         state.result_queue.put(("validate_ok", response))
 
+            elif action == "explain":
+                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol("explain", timeout_s=3.0)
+                    state.result_queue.put(("explain_ok", response))
+
+            elif action == "identity":
+                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol("?", timeout_s=3.0)
+                    state.result_queue.put(("identity_ok", response))
+
         except SerialError as e:
             state.result_queue.put(("error", str(e)))
         except Exception as e:
@@ -246,7 +270,7 @@ def process_results(state: AppState) -> None:
             if error:
                 state.log.append(f"Error: {error}", COLOR_ERROR)
 
-        elif result_type in ("meta_ok", "history_ok", "source_ok"):
+        elif result_type in ("meta_ok", "history_ok", "source_ok", "explain_ok", "identity_ok"):
             response = result[1]
             state.log.append(response)
 
@@ -303,9 +327,9 @@ def handle_menu_input(state: AppState, key: int) -> None:
 
     if key == 27:  # Escape
         state.screen = Screen.HOME
-    elif key == curses.KEY_UP:
+    elif key == curses.KEY_UP or key == ord("k"):
         state.menu.move_up()
-    elif key == curses.KEY_DOWN:
+    elif key == curses.KEY_DOWN or key == ord("j"):
         state.menu.move_down()
     elif key == ord("\n") or key == ord("\r"):
         item = state.menu.get_selected()
@@ -387,6 +411,14 @@ def execute_action(state: AppState, action: Action | None) -> None:
     elif action == Action.SOURCE:
         state.log.append("Fetching source...")
         state.io_queue.put(("source",))
+
+    elif action == Action.EXPLAIN:
+        state.log.append("Fetching explanation...")
+        state.io_queue.put(("explain",))
+
+    elif action == Action.IDENTITY:
+        state.log.append("Fetching identity...")
+        state.io_queue.put(("identity",))
 
     elif action == Action.VALIDATE:
         state.log.append("Running validation...")

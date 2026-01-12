@@ -50,7 +50,7 @@ def init_colors() -> bool:
 # Key hints
 KEY_HINTS = {
     "home": "q:Quit  Tab:Menu  ?:Help  Enter:Send",
-    "menu": "Up/Down:Navigate  Enter:Select  Esc:Close",
+    "menu": "j/k or Arrows:Navigate  Enter:Select  Esc:Close",
     "confirm": "y:Yes  n:No  Esc:Cancel",
     "input": "Enter:Submit  Esc:Cancel",
 }

@@ -1,7 +1,7 @@
 # Codignity Milestone C Smoke Test Transcript
 # Date: 2026-01-12
 # Branch: feat/milestone-c-cli
-# Purpose: Demonstrate CLI workflow: probe -> snapshot -> define -> diff -> restore -> verify
+# Purpose: Demonstrate CLI workflow with defs capture, diff noise suppression, restore re-probe
 
 ## 1. Probe Device
 $ codignity_cli.py probe --port /dev/cu.usbserial-0001
@@ -17,67 +17,63 @@ Units: ticks
 Pins: gpio4
 Children: 0
 
-## 2. Create Snapshot
+## 2. Define New Word (Captured to Defs Log)
+$ codignity_cli.py define ": smoketest 999 ;" --port /dev/cu.usbserial-0001
+Defined: : smoketest 999 ;
+  (captured to .codignity/defs/node1.defs)
+
+## 3. Create Snapshot (Loads from Defs Log)
 $ codignity_cli.py snapshot create --out smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
+  Loaded 1 defs from .codignity/defs/node1.defs
 Snapshot saved to: smoke-snapshot.cdsnap
   Node: node1
   Role: gateway
   Meta keys: 6
-  Defs: 0
+  Defs: 1
 
-## 3. Define New Word (User Modification)
-$ codignity_cli.py define ": smoketest 999 ;" --port /dev/cu.usbserial-0001
-Defined: : smoketest 999 ;
-
-## 4. Show Diff (Snapshot vs Live)
+## 4. Show Diff (With Noise Suppression)
 $ codignity_cli.py snapshot diff --in smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
 Comparing snapshot (smoke-snapshot.cdsnap) vs live node:
-  Snapshot: node1 @ 2026-01-12T04:46:08+00:00
+  Snapshot: node1 @ 2026-01-12T06:57:30+00:00
+  Baseline: 114 core defs filtered
 
 Defines only on live node:
-  + ?
-  + c
-  + cd-boot
-  + cd-node
-  + d
-  + define
-  + explain
   + foo
-  + history
-  + meta
-  + n
-  + recover
-  + repl
-  + restart
-  + rollback
-  + s
-  + safe-save
-  + save
-  + validate
+Defines only in snapshot:
+  - smoketest
 
-## 5. Restore from Snapshot
+Note: Core firmware defs (114 words from codignity.fs) are filtered from diff output.
+Only user-defined words (foo, smoketest) are shown.
+
+## 5. Restore from Snapshot (With Re-probe)
 $ codignity_cli.py snapshot restore --in smoke-snapshot.cdsnap --yes --port /dev/cu.usbserial-0001
 Loaded snapshot: smoke-snapshot.cdsnap
-  Date: 2026-01-12T04:46:08+00:00
+  Date: 2026-01-12T06:57:30+00:00
   Node: node1
   Role: gateway
   Meta keys: 6
-  Defs: 0
+  Defs: 1
 Entering REPL mode...
 Loading codignity.fs...
   [100%] 607 lines loaded.
 Entering protocol mode...
 Applying 6 meta settings...
+Applying 1 definitions...
 Validating...
 Validation passed.
 Running safe-save...
 Saved to flash.
 Restarting...
-Device restarting.
+Device restarting...
+Waiting for device to boot...
 
-Restore complete.
+Restore complete. Final state:
+  Node ID: node1
+  Role: gateway
+  Mode: protocol
+  Codignity loaded: True
 
-## 6. Verify After Restore
+## 6. Verify Restored State
 $ codignity_cli.py probe --port /dev/cu.usbserial-0001
 Port: /dev/cu.usbserial-0001
 Mode: protocol
@@ -93,10 +89,10 @@ Children: 0
 
 ## Summary
 - probe: Identifies node, confirms protocol mode
-- snapshot create: Captures node state to .cdsnap file
-- define: Adds user-defined word (modification)
-- snapshot diff: Shows differences between snapshot and live node
-- snapshot restore: Reloads firmware, applies meta, validates, persists
-- probe (verify): Confirms node is operational after restore
+- define: Captures to .codignity/defs/<node_id>.defs for persistence
+- snapshot create: Loads defs from per-node log automatically
+- snapshot diff: Filters 114 core firmware defs, shows only user defs
+- snapshot restore: Full reload + apply defs + validate + persist + re-probe verification
+- probe (verify): Confirms node operational after restore
 
 All Milestone C acceptance criteria met.
