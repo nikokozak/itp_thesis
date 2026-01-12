@@ -252,6 +252,41 @@ def extract_def_name(define_line: str) -> str | None:
     return None
 
 
+def load_baseline_defs(firmware_path: Path) -> set[str]:
+    """Extract word names defined in the Codignity firmware source.
+
+    Parses lines starting with `: name` (Forth word definitions) to build
+    a set of baseline/core word names that should be excluded from diffs.
+
+    Args:
+        firmware_path: Path to codignity.fs or similar Forth source file.
+
+    Returns:
+        Set of word names defined in the firmware.
+    """
+    if not firmware_path.exists():
+        return set()
+
+    baseline: set[str] = set()
+
+    try:
+        with open(firmware_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith("\\"):
+                    continue
+
+                # Look for word definitions: `: name ...`
+                match = re.match(r":\s+(\S+)", line)
+                if match:
+                    baseline.add(match.group(1))
+    except Exception:
+        return set()
+
+    return baseline
+
+
 @dataclass
 class SnapshotDiff:
     """Difference between live node state and a snapshot.

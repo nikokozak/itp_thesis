@@ -49,6 +49,26 @@ Run from repo root:
 
 Existing code (e.g., `codignity_serial.py`) works perfectly. If something doesn't work, it is likely being used incorrectly. Add new code alongside existing code; do not refactor or "improve" what already works.
 
+### CLI Features (Milestone C)
+
+The CLI (`codignity_cli.py`) provides:
+- `probe` — Identify node, show id/role/ver/mode
+- `load [--persist]` — Load firmware, optionally safe-save + restart
+- `define` — Add Forth word, captures to `.codignity/defs/<node_id>.defs`
+- `snapshot create/restore/diff` — Node state backup/restore
+- `meta/history/source/explain/validate` — Protocol inspection commands
+
+**Define capture**: Every successful `define` appends to `.codignity/defs/<node_id>.defs` (gitignored). Snapshot create loads these automatically.
+
+**Diff noise suppression**: `snapshot diff` filters out core firmware defs by parsing `codignity.fs` as baseline.
+
+### TUI
+
+The TUI (`codignity_tui.py`) provides ncurses interface with:
+- ASCII banner, status bar, log pane
+- Menu for probe/meta/history/source/validate/clear/quit
+- Threaded I/O for non-blocking serial
+
 ## Testing
 
 Hardware-in-loop testing with actual ESP32 nodes. Transcripts in `tools/terminal/transcripts/` serve as regression artifacts.

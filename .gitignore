@@ -32,3 +32,6 @@ venv/
 # Local exports
 *.pdf
 *.log
+
+# Codignity CLI per-node defs logs
+.codignity/

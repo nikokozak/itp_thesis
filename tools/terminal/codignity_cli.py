@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,13 @@ from codignity.snapshot import (
     compute_diff,
     format_diff,
     extract_def_name,
+    load_baseline_defs,
+)
+from codignity.defs_log import (
+    append_define,
+    load_defs,
+    load_defs_from_file,
+    merge_defs,
 )
 
 if TYPE_CHECKING:
@@ -285,7 +293,21 @@ def cmd_define(args: argparse.Namespace) -> int:
                         print("Hint: Check syntax. Format: `: name ... ;`", file=sys.stderr)
                     return 1
 
+                # Capture define to per-node defs log
+                # Get node_id from meta id
+                node_id = "unknown"
+                try:
+                    id_response = session.send_protocol("meta id", timeout_s=args.timeout)
+                    for line in id_response.splitlines():
+                        if line.startswith("! id "):
+                            node_id = line[5:].strip()
+                            break
+                except Exception:
+                    pass  # Fall back to "unknown"
+
+                defs_path = append_define(node_id, cmd, port=session.port)
                 print(f"Defined: {body}")
+                print(f"  (captured to {defs_path})")
                 return 0
 
     except SerialError as e:
@@ -532,22 +554,27 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
                 transcript.record_received(response)
                 meta = parse_meta_dump(response)
 
-                # Get defs from file if provided
-                defs: list[str] = []
+                # Load defs from per-node defs log (cross-invocation capture)
+                node_id = identity.get("id", "unknown")
+                base_defs = load_defs(node_id)
+                if base_defs:
+                    print(f"  Loaded {len(base_defs)} defs from .codignity/defs/{node_id}.defs")
+
+                # Merge with --defs file if provided
+                override_defs: list[str] = []
                 if args.defs:
                     defs_path = Path(args.defs)
                     if not defs_path.exists():
                         print(f"Error: Defs file not found: {defs_path}", file=sys.stderr)
                         return 1
-                    with open(defs_path, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if line and not line.startswith("#"):
-                                # Ensure it's a define command
-                                if line.startswith("define"):
-                                    defs.append(line)
-                                elif line.startswith(":"):
-                                    defs.append(f"define {line}")
+                    override_defs = load_defs_from_file(defs_path)
+                    if override_defs:
+                        print(f"  Loaded {len(override_defs)} defs from {defs_path}")
+
+                # Merge and de-dup by word name
+                defs, merge_notes = merge_defs(base_defs, override_defs)
+                for note in merge_notes:
+                    print(f"  Note: {note}")
 
                 # Create snapshot
                 snapshot = Snapshot.create_now(
@@ -780,10 +807,29 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
                 transcript.record_sent("restart")
                 response = session.send_protocol("restart", timeout_s=args.timeout)
                 transcript.record_received(response)
-                print("Device restarting.")
+                print("Device restarting...")
 
-                print("\nRestore complete.")
-                return 0
+                # Close session before re-probe
+                port = session.port
+
+        # Step 9: Re-probe to verify
+        print("Waiting for device to boot...")
+        time.sleep(2)  # Give device time to restart
+
+        with SerialSession.open(
+            port=port,
+            baud=args.baud,
+            settle_s=5.0,  # Full settle for autoexec
+        ) as session2:
+            transcript.record_comment("Re-probing after restart...")
+            result = probe(session2, timeout_s=args.timeout)
+            print("\nRestore complete. Final state:")
+            print(f"  Node ID: {result.node_id or 'unknown'}")
+            print(f"  Role: {result.role or 'unknown'}")
+            print(f"  Mode: {result.mode}")
+            print(f"  Codignity loaded: {result.codignity_loaded}")
+
+        return 0
 
     except SerialError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -832,7 +878,7 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
 
                 # Parse define names from source output
                 # Format is "! : name  body ;" for each definition
-                live_defs: list[str] = []
+                live_defs_all: list[str] = []
                 for line in response.splitlines():
                     line = line.strip()
                     if line.startswith("! : "):
@@ -841,13 +887,27 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
                         # Name is the first token
                         parts = rest.split(None, 1)
                         if parts:
-                            live_defs.append(parts[0])
+                            live_defs_all.append(parts[0])
+
+                # Filter out baseline/core firmware defs to reduce noise
+                repo_root = _this_dir.parent.parent
+                firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+                baseline_defs = load_baseline_defs(firmware_path)
+
+                if baseline_defs:
+                    live_defs = [d for d in live_defs_all if d not in baseline_defs]
+                else:
+                    # Could not load baseline - skip live-only defs section
+                    print("Warning: Could not load firmware baseline; skipping live-only defs.")
+                    live_defs = []
 
                 # Compute diff
                 diff = compute_diff(snapshot, live_meta, live_defs)
 
                 print(f"Comparing snapshot ({snap_path.name}) vs live node:")
                 print(f"  Snapshot: {snapshot.node_id or 'unknown'} @ {snapshot.date}")
+                if baseline_defs:
+                    print(f"  Baseline: {len(baseline_defs)} core defs filtered")
                 print()
                 print(format_diff(diff))
 
