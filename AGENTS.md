@@ -16,6 +16,11 @@ line-oriented UART protocol designed to be readable and maintainable “offline�
 - Install Python deps (no activation required): `python3 -m venv .venv && .venv/bin/python -m pip install -r tools/terminal/requirements.txt`
   - Note: `.venv/bin/activate` must be sourced (`source ...`) to affect your shell; executing it won’t persist env changes.
 - Flash ESP32forth (once): `arduino-cli --config-file tools/arduino/arduino-cli.yaml compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-path .arduino/build/esp32forth --upload -p /dev/cu.usbserial-0001 firmware/esp32/esp32forth/ESP32forth-7.0.6.19/ESP32forth`
+- Preferred CLI (Milestone C): `.venv/bin/python tools/terminal/codignity_cli.py probe|load|define|snapshot ...`
+  - Example load + persist: `.venv/bin/python tools/terminal/codignity_cli.py load --persist --port /dev/cu.usbserial-0001`
+  - Example snapshot: `.venv/bin/python tools/terminal/codignity_cli.py snapshot create --out node.cdsnap --port /dev/cu.usbserial-0001`
+  - Record a session: `--transcript tools/terminal/transcripts/session.txt`
+- TUI (early skeleton): `.venv/bin/python tools/terminal/codignity_tui.py --port /dev/cu.usbserial-0001`
 - Load/reload `codignity.fs` (stable, prompt-independent):
   - Exit protocol mode (ok if already in REPL): `.venv/bin/python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until end --line "repl"`
   - Send file line-by-line, waiting for `ok`: `.venv/bin/python tools/terminal/codignity_serial.py --port /dev/cu.usbserial-0001 --until ok --file firmware/esp32/codignity.fs`
