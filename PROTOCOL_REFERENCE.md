@@ -20,11 +20,11 @@
 | `source` | — | Forth listing | Show all code |
 | `history` | — | Modification log | Who changed what |
 | `meta` | `[key] [value]` | Key/value | Read or set persisted metadata |
-| `diff` | `N` | Diff output | Show change N *(planned)* |
+| `diff` | `N` | Diff output | Show change N *(planned on-node; use terminal-side diff for now)* |
 | `rollback` | `N` | `! ok` | Revert to state N |
 | `scan` | — | Pin analysis | What's connected *(planned)* |
 | `trace` | `on/off` | — | Enable tracing *(planned)* |
-| `define` | `: word ... ;` | `! ok` | Compile Forth |
+| `define` | `: word ... ;` | `! ok` | Compile Forth (single-line: `define : foo 123 ;`) |
 | `save` | — | `! ok` | Persist to flash |
 | `restart` | — | `! rebooting` | Reboot node |
 | `repl` | — | `! ok` | Exit protocol mode to REPL (dev) |
@@ -60,7 +60,7 @@
 ! id <name>
 ! role <role>
 ! mcu <chip>
-! ver <version>
+! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
 ! fifo <size>
 ! units <units>         ← optional (if set via `meta`)
 ! pins <pins>           ← optional (if set via `meta`)
@@ -91,7 +91,7 @@
 ! id <name>
 ! role <role>
 ! mcu <chip>
-! ver <version>
+! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
 ! units <units>         ← optional
 ! pins <pins>           ← optional
 ! children <count>

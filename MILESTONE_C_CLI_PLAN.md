@@ -23,7 +23,7 @@ This document is written as an implementation spec for another model/engineer to
   - `probe` → identifies node id + confirms protocol mode
   - `snapshot` created
   - user change via `define` (tool captures the exact line)
-  - `diff` displayed (terminal-side)
+  - `diff` displayed (terminal-side; live node vs snapshot)
   - `restore` onto a fresh state succeeds (meta + user defs restored), followed by `safe-save` and `restart`
 
 ---
@@ -69,7 +69,7 @@ Keep it minimal, but split responsibilities:
 
 ```
 tools/terminal/
-  codignity_serial.py          # keep as low-level engine (already exists)
+  codignity_serial.py          # low-level transport (line/file send, markers, scripting directives)
   codignity_cli.py             # new: argparse CLI entrypoint (non-interactive)
   codignity_tui.py             # new: curses UI entrypoint
   codignity/
@@ -85,6 +85,16 @@ tools/terminal/
 ```
 
 If that feels too heavy for v1: merge `session.py/protocol.py/transcript.py` into a single `codignity_core.py`.
+
+### Relationship to existing `codignity_serial.py` (avoid duplication)
+Pick one approach and commit to it early:
+
+- **Preferred:** move the serial primitives into `codignity/session.py` (importable), and make
+  `tools/terminal/codignity_serial.py` a thin wrapper around that library for backwards compatibility.
+- **Acceptable (v1):** keep `codignity_serial.py` as a standalone transport tool, but have CLI/TUI import shared
+  helpers so marker logic and DTR/RTS behavior do not diverge.
+
+Do **not** maintain two independent serial stacks long-term.
 
 ---
 
@@ -109,6 +119,10 @@ Entry command (run from repo):
    - Output (human + machine):
      - human: summary lines
      - machine: `--json` option emits `{port, mode, codignity_loaded, node_id, role, ver}`
+   - `ver` semantics:
+     - `ver` comes from Codignity’s identity output (`! ver ...`), which is derived from `meta ver`.
+     - If `meta ver` is missing, Codignity defaults to `codignity-0.1`.
+     - If Codignity isn’t loaded, `ver` should be `null`/`unknown`.
 
 2. `send "<line>"`
    - Sends exactly one protocol line (expects `! end`)
@@ -124,7 +138,9 @@ Entry command (run from repo):
    - Pure protocol surface; always ends with `! end`
 
 5. `define "<: name ... ;>"`
-   - Sends one `define ...` line in protocol mode
+   - Actual wire syntax is **one line**: `define : name ... ;`
+   - CLI UX should accept the **definition body** (starting with `:`) and send `define <body>` over the wire.
+     - Example: `codignity define ": foo 123 ;"` sends `define : foo 123 ;`
    - Tool must also store the exact define-line in snapshot/transcript metadata (this is the only reliable “source”)
 
 6. `history` / `source` / `explain`
@@ -150,7 +166,22 @@ Entry command (run from repo):
      8) `restart`
      9) re-`probe` and print final id/role
 
-9. `tui` (launch ncurses UI)
+9. `snapshot diff --in <file>`
+   - Terminal-side diff of **current live node** vs the snapshot file (preview before restore).
+   - Minimal diff rules (v1):
+     - `meta`: added/removed/changed keys (string compare)
+     - `defs`: compare by word name extracted from `define : <name> ... ;` lines
+       - show `will add`, `already present` (collision risk with “new words only”), `missing on node`
+
+10. `tui` (launch ncurses UI)
+
+### Restore error handling (must be explicit)
+Default behavior should be **fail-fast** and **non-persistent**:
+- If any `meta set` or `define` step returns `# err ...` (or lacks the expected terminator), **abort immediately**.
+- Do **not** run `safe-save` after a failed restore step.
+- Print the first failing command + device error payload + suggested next action (`recover`/`rollback 1`/SAFE+EN).
+
+Optional (later): add `--continue-on-error` for debugging, but keep it off by default.
 
 ---
 
@@ -289,4 +320,3 @@ Restore uses `[meta]` and `[defs]` only; `[notes]` is informational.
   - `feat(cli): snapshot create/restore`
   - `feat(tui): add ncurses home + log panes`
 - Any stubbed behavior must be marked `TODO(thesis): <concrete next action>`.
-
