@@ -460,6 +460,7 @@ def cmd_load(args: argparse.Namespace) -> int:
                 # Step 3: Enter protocol mode with revive
                 transcript.record_comment("Entering protocol mode...")
                 print("Entering protocol mode...")
+                session.drain(0.2)  # Clear any buffered output from firmware load
                 session.send_line("revive")
                 result = session.read_until(b" ok", args.timeout)
                 if not result.found:
@@ -719,15 +720,12 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
                 # Step 3: Enter protocol mode
                 transcript.record_comment("Entering protocol mode...")
                 print("Entering protocol mode...")
+                session.drain(0.2)  # Clear any buffered output from firmware load
                 session.send_line("revive")
                 result = session.read_until(b" ok", args.timeout)
-                if not result.found or b"not found" in result.data.lower():
-                    print(
-                        "Error: Could not enter protocol mode.\n"
-                        "Try: Hold SAFE + press EN to stay in REPL, then run `revive`.",
-                        file=sys.stderr,
-                    )
-                    return 1
+                if not result.found:
+                    # Warn but continue - protocol commands will fail if not actually in protocol mode
+                    print("Warning: revive did not return ok", file=sys.stderr)
                 session.drain(0.3)
 
                 # Step 4: Apply meta set commands
@@ -889,7 +887,10 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
                         if parts:
                             live_defs_all.append(parts[0])
 
-                # Filter out baseline/core firmware defs to reduce noise
+                # Diff noise suppression:
+                # - "Core firmware" means Codignity's shipped words (derived from local `firmware/esp32/codignity.fs`),
+                #   not ESP32forth kernel words.
+                # - This keeps `snapshot diff` focused on user-defined words.
                 repo_root = _this_dir.parent.parent
                 firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
                 baseline_defs = load_baseline_defs(firmware_path)

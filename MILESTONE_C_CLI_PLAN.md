@@ -183,12 +183,19 @@ Entry command (run from repo):
      - `defs`: compare by word name extracted from `define : <name> ... ;` lines
        - show `will add`, `already present` (collision risk with “new words only”), `missing on node`
    - **Diff noise suppression (choice: suppress core firmware defs by default):**
+     - “Core firmware” here means **Codignity’s shipped definitions** (i.e. what lives in `firmware/esp32/codignity.fs`),
+       not ESP32forth’s built-in kernel words.
      - When listing live defs, do *not* treat Codignity core words as “user diffs”.
      - Implementation: build a `baseline_defs` set by parsing the local firmware file `firmware/esp32/codignity.fs`
        for `: <name>` definitions; then compute `live_user_defs = live_defs_all - baseline_defs`.
      - Diff output should only include `live_user_defs` vs snapshot defs (and never dump baseline/core words).
      - If `baseline_defs` cannot be computed (missing firmware file or parse yields empty), omit the “live-only defs”
        section entirely and print a one-line warning explaining that core suppression is unavailable.
+     - Robustness against version skew:
+       - `snapshot create` should record a `# firmware_sha256: ...` header for the firmware file used to derive
+         `baseline_defs` (default: `firmware/esp32/codignity.fs`).
+       - `snapshot diff` should warn if the snapshot’s `firmware_sha256` does not match the current local firmware file,
+         because core suppression may be inaccurate (old core words may appear as “live-only” user defs).
 
 10. `tui` (launch ncurses UI)
 
