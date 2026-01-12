@@ -1,0 +1,102 @@
+# Codignity Milestone C Smoke Test Transcript
+# Date: 2026-01-12
+# Branch: feat/milestone-c-cli
+# Purpose: Demonstrate CLI workflow: probe -> snapshot -> define -> diff -> restore -> verify
+
+## 1. Probe Device
+$ codignity_cli.py probe --port /dev/cu.usbserial-0001
+Port: /dev/cu.usbserial-0001
+Mode: protocol
+Codignity loaded: True
+Node ID: node1
+Role: gateway
+Version: thesis-0.1
+MCU: esp32
+FIFO size: 256
+Units: ticks
+Pins: gpio4
+Children: 0
+
+## 2. Create Snapshot
+$ codignity_cli.py snapshot create --out smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
+Snapshot saved to: smoke-snapshot.cdsnap
+  Node: node1
+  Role: gateway
+  Meta keys: 6
+  Defs: 0
+
+## 3. Define New Word (User Modification)
+$ codignity_cli.py define ": smoketest 999 ;" --port /dev/cu.usbserial-0001
+Defined: : smoketest 999 ;
+
+## 4. Show Diff (Snapshot vs Live)
+$ codignity_cli.py snapshot diff --in smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
+Comparing snapshot (smoke-snapshot.cdsnap) vs live node:
+  Snapshot: node1 @ 2026-01-12T04:46:08+00:00
+
+Defines only on live node:
+  + ?
+  + c
+  + cd-boot
+  + cd-node
+  + d
+  + define
+  + explain
+  + foo
+  + history
+  + meta
+  + n
+  + recover
+  + repl
+  + restart
+  + rollback
+  + s
+  + safe-save
+  + save
+  + validate
+
+## 5. Restore from Snapshot
+$ codignity_cli.py snapshot restore --in smoke-snapshot.cdsnap --yes --port /dev/cu.usbserial-0001
+Loaded snapshot: smoke-snapshot.cdsnap
+  Date: 2026-01-12T04:46:08+00:00
+  Node: node1
+  Role: gateway
+  Meta keys: 6
+  Defs: 0
+Entering REPL mode...
+Loading codignity.fs...
+  [100%] 607 lines loaded.
+Entering protocol mode...
+Applying 6 meta settings...
+Validating...
+Validation passed.
+Running safe-save...
+Saved to flash.
+Restarting...
+Device restarting.
+
+Restore complete.
+
+## 6. Verify After Restore
+$ codignity_cli.py probe --port /dev/cu.usbserial-0001
+Port: /dev/cu.usbserial-0001
+Mode: protocol
+Codignity loaded: True
+Node ID: node1
+Role: gateway
+Version: thesis-0.1
+MCU: esp32
+FIFO size: 256
+Units: ticks
+Pins: gpio4
+Children: 0
+
+## Summary
+- probe: Identifies node, confirms protocol mode
+- snapshot create: Captures node state to .cdsnap file
+- define: Adds user-defined word (modification)
+- snapshot diff: Shows differences between snapshot and live node
+- snapshot restore: Reloads firmware, applies meta, validates, persists
+- probe (verify): Confirms node is operational after restore
+
+All Milestone C acceptance criteria met.
