@@ -142,6 +142,13 @@ Entry command (run from repo):
    - CLI UX should accept the **definition body** (starting with `:`) and send `define <body>` over the wire.
      - Example: `codignity define ": foo 123 ;"` sends `define : foo 123 ;`
    - Tool must also store the exact define-line in snapshot/transcript metadata (this is the only reliable “source”)
+   - **Define capture (cross-invocation; required for snapshots):**
+     - After a successful `define`, append the exact wire line (`define : name ... ;`) to a per-node defs log.
+     - Path (repo-local, gitignored): `.codignity/defs/<node_id>.defs` (UTF-8, plain text).
+     - Format:
+       - Comment lines start with `#` (may include ISO8601 UTC timestamp + port).
+       - One `define : ... ;` line per definition.
+     - `node_id` comes from `meta id` (protocol) at the time of defining; if it cannot be read, fall back to `unknown`.
 
 6. `history` / `source` / `explain`
 
@@ -150,7 +157,10 @@ Entry command (run from repo):
      - `probe` info (id/role/ver)
      - `meta dump`
      - `source` (for inspection only)
-     - **define-lines** used in this session (if available) OR from a provided `--defs <file>`
+     - **define-lines**:
+       - Default: load from `.codignity/defs/<node_id>.defs` (see “Define capture” above).
+       - Optional: merge additional define-lines from `--defs <file>` (one define per line).
+       - De-dup by word name; if the same word appears multiple times, prefer the `--defs` version and record a note.
      - a marker that `safe-save` succeeded (tool can run it as part of snapshot)
 
 8. `snapshot restore --in <file>`
@@ -172,6 +182,13 @@ Entry command (run from repo):
      - `meta`: added/removed/changed keys (string compare)
      - `defs`: compare by word name extracted from `define : <name> ... ;` lines
        - show `will add`, `already present` (collision risk with “new words only”), `missing on node`
+   - **Diff noise suppression (choice: suppress core firmware defs by default):**
+     - When listing live defs, do *not* treat Codignity core words as “user diffs”.
+     - Implementation: build a `baseline_defs` set by parsing the local firmware file `firmware/esp32/codignity.fs`
+       for `: <name>` definitions; then compute `live_user_defs = live_defs_all - baseline_defs`.
+     - Diff output should only include `live_user_defs` vs snapshot defs (and never dump baseline/core words).
+     - If `baseline_defs` cannot be computed (missing firmware file or parse yields empty), omit the “live-only defs”
+       section entirely and print a one-line warning explaining that core suppression is unavailable.
 
 10. `tui` (launch ncurses UI)
 
