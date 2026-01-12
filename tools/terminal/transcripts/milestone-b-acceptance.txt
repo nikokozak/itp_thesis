@@ -1,0 +1,228 @@
+# Milestone B Acceptance Transcript
+# Date: 2026-01-12T01:03:57Z
+# Branch: feat/milestone-b-self-description
+# Commit: eece4667fd3b6c9c7f55d6a85daea35b11fd1024
+# Port: /dev/cu.usbserial-0001
+
+## Setup
+- Starts by loading `firmware/esp32/codignity.fs` (muted; waits for `ok` per line).
+- Then runs protocol commands (each ends with `! end`).
+
+## Commands + Output
+> meta id node1
+meta id node1
+! ok
+! end
+> meta role gateway
+meta role gateway
+! ok
+! end
+> define : foo 123 ;
+define : foo 123 ;
+! ok
+! end
+> define : foo 456 ;
+define : foo 456 ;
+# err define_exists
+! end
+> source
+source
+! : ?  s" ! id " type cd-id$ type cr s" ! role " type cd-role$ type cr s" ! mcu esp32" type cr s" ! ver " type cd-ver$ type cr s" ! fifo " type cd-fifo-size . cr s" units" 2dup cd.!meta-if s" pins" 2dup cd.!meta-if s" ! children " type cd-children$ type cr cd.!end ; 
+! : s  cd-next-sample 2dup cd-push cd.!sample cd.!end ; 
+! : n  s" ! " type cd-count @ . cr cd.!end ; 
+! : d  cd-count @ cd-parse-int-or cd-count @ cd-min cd-dump ; 
+! : c  cd-clear cd.!ok cd.!end ; 
+! : explain  s" ! id " type cd-id$ type cr s" ! role " type cd-role$ type cr s" ! mcu esp32" type cr s" ! ver " type cd-ver$ type cr s" units" 2dup cd.!meta-if s" pins" 2dup cd.!meta-if s" ! children " type cd-children$ type cr s" ! fifo " type cd-fifo-size . cr s" ! core ? s n d c" type cr s" ! extended explain source history define meta save validate safe-save restart recover rollback repl" type cr cd.!end ; 
+! : history  cd-history-path$ R/O OPEN-FILE DUP 0<> 0BRANCH DROP DROP cd.!end EXIT DROP >R cd-history-line-clear cd-history-ch 1 -4 local@ READ-FILE throw DUP 0BRANCH DROP cd-history-ch C@ DUP cd-eol? 0BRANCH DROP cd-history-line-flush BRANCH cd-history-line-add BRANCH DROP cd-history-line-flush -4 local@ CLOSE-FILE throw cd.!end rdrop ; 
+! : define  cd-rest-of-line cd-skip-spaces 2dup cd-define-ln ! cd-define-la ! 2drop cd-define-la @ cd-define-ln @ cd-define-name 0= 0BRANCH s" define_syntax" cd.#err cd.!end cd-consume-line 2drop EXIT 2dup cd-define-nn ! cd-define-na ! 2drop cd-define-na @ cd-define-nn @ FIND 0<> 0BRANCH s" define_exists" cd.#err cd.!end cd-consume-line EXIT s" define" cd-define-na @ cd-define-nn @ cd-history-event+ cd-consume-line cd-define-current-save cd-user-wordlist current ! cd-define-la @ cd-define-ln @ evaluate cd-define-current-restore cd.!ok cd.!end ; 
+! : meta  cd-rest-of-line cd-skip-spaces cd-consume-line DUP 0= 0BRANCH 2drop cd-meta-count @ 0 (?do) 0BRANCH (do) s" ! " type R@ cd-meta-kread type space R@ cd-meta-vread type cr 1 (+loop) 0BRANCH rdrop rdrop cd.!end EXIT cd-token DUP 0= 0BRANCH cd-5drop s" meta_syntax" cd.#err cd.!end EXIT DROP 2swap cd-skip-spaces 2swap DUP 0= 0BRANCH 2drop 2dup cd-meta-find DUP -1 = 0BRANCH DROP 2drop s" meta_missing" cd.#err cd.!end EXIT >R s" ! " type 2dup type space R> cd-meta-vread type cr 2drop cd.!end EXIT cd-token DUP 0= 0BRANCH cd-5drop 2drop s" meta_syntax" cd.#err cd.!end EXIT DROP cd-skip-spaces DUP 0<> 0BRANCH 2drop 2drop 2drop s" meta_syntax" cd.#err cd.!end EXIT 2drop 2dup cd-meta-tvn ! cd-meta-tva ! 2swap 2dup cd-meta-tkn ! cd-meta-tka ! 2swap cd-4drop cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-meta-set 0= 0BRANCH s" meta_full" cd.#err cd.!end EXIT cd-meta-save 0= 0BRANCH s" meta_io" cd.#err cd.!end EXIT s" meta" cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-history-event-kv cd.!ok cd.!end ; 
+! : save  cd-ensure-autostart remember s" save" cd-history-event cd.!ok cd.!end ; 
+! : validate  cd-validate? 0BRANCH cd.!ok BRANCH s" ! fail stack" type cr cd.!end ; 
+! : safe-save  cd-validate? 0BRANCH cd-ensure-autostart cd-lkg$ save-name remember s" safe-save" cd-history-event cd.!ok BRANCH s" ! fail validate" type cr cd.!end ; 
+! : restart  s" ! rebooting" type cr cd.!end s" restart" cd-history-event 100 ms bye ; 
+! : recover  s" recover" cd-history-event cd-myforth$ DELETE-FILE DROP cd-lkg$ DELETE-FILE DROP cd.!ok cd.!end 100 ms bye ; 
+! : rollback  1 cd-parse-int-or DUP 1 <> 0BRANCH DROP s" unsupported" cd.#err cd.!end EXIT DROP cd-lkg$ cd-file-exists? 0= 0BRANCH s" rollback_missing" cd.#err cd.!end EXIT s" rollback" cd-history-event cd.!ok cd.!end cd-lkg$ restore-name ; 
+! : repl  -1 cd-old-echo ! -1 cd-old-arrow ! -1 cd-exit ! -1 echo ! -1 arrow ! cd.!ok cd.!end ; 
+! : cd-boot  cd-safe-setup cd-safe-pressed? 0BRANCH -1 echo ! -1 arrow ! s" SAFE: pressed; staying in REPL" type cr BRANCH cd-node ; 
+! : cd-node  echo @ cd-old-echo ! arrow @ cd-old-arrow ! 'notfound @ cd-old-notfound ! 0 cd-exit ! 0 echo ! 0 arrow ! cd-error-reset 1073677372 'notfound ! cd-exit @ 0<> 0BRANCH -1 BRANCH refill 0= 0BRANCH 10 ms BRANCH 1073640912 catch ?dup 0BRANCH 0 state ! sp0 SP! fp0 FP! rp0 RP! cd-handle-exception 0 0BRANCH cd-old-notfound @ 'notfound ! cd-old-echo @ echo ! cd-old-arrow @ arrow ! ; 
+! : foo  123 ; 
+
+! end
+> history
+history
+! 0define0meta0define0metaidnode1
+! 0metaidnode1
+! 1metaidnode2
+! 2metaidnode3
+! 3metaidnode1
+! 0metaidnode2
+! 0 meta id node3
+! 0 meta role gateway
+! 1 meta children 2
+! 2 meta units ticks
+! 3 meta pins gpio4
+! 4 meta ver thesis-0.1
+! 0 define 0 define 0 define 0 define : abcxyz123 7 ;
+! 1 define : abcxyz123 8 ;
+! 0 define : uniqueone 1 ;
+! 1 define : uniqueone 2 ;
+! 0 define : tempword 1 ;
+! 1 define : tempword 2 ;
+! 0 define  1 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 meta id node4
+! 0 meta id node5
+! 1 define  1 ;
+! 2 define  2 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 define uniqz1
+! 0 meta id node6
+! 0 meta id milestoneB
+! 1 meta role gateway
+! 2 meta ver thesis-0.1
+! 3 meta units ticks
+! 4 meta pins gpio4
+! 5 meta children 0
+! 6 define demo
+! 7 safe-save
+! 8 restart
+! 7 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! 3 safe-save
+! 4 restart
+! 0 safe-save
+! 1 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! 3 safe-save
+! 4 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! end
+> validate
+validate
+! ok
+! end
+> safe-save
+safe-save
+! ok
+! end
+> restart
+restart
+! rebooting
+! end
+> meta id
+! id node1
+! end
+> explain
+! id node1
+! role gateway
+! mcu esp32
+! ver thesis-0.1
+! units ticks
+! pins gpio4
+! children 0
+! fifo 256 
+! core ? s n d c
+! extended explain source history define meta save validate safe-save restart recover rollback repl
+! end
+> ?
+! id node1
+! role gateway
+! mcu esp32
+! ver thesis-0.1
+! fifo 256 
+! units ticks
+! pins gpio4
+! children 0
+! end
+> source
+! : ?  s" ! id " type cd-id$ type cr s" ! role " type cd-role$ type cr s" ! mcu esp32" type cr s" ! ver " type cd-ver$ type cr s" ! fifo " type cd-fifo-size . cr s" units" 2dup cd.!meta-if s" pins" 2dup cd.!meta-if s" ! children " type cd-children$ type cr cd.!end ; 
+! : s  cd-next-sample 2dup cd-push cd.!sample cd.!end ; 
+! : n  s" ! " type cd-count @ . cr cd.!end ; 
+! : d  cd-count @ cd-parse-int-or cd-count @ cd-min cd-dump ; 
+! : c  cd-clear cd.!ok cd.!end ; 
+! : explain  s" ! id " type cd-id$ type cr s" ! role " type cd-role$ type cr s" ! mcu esp32" type cr s" ! ver " type cd-ver$ type cr s" units" 2dup cd.!meta-if s" pins" 2dup cd.!meta-if s" ! children " type cd-children$ type cr s" ! fifo " type cd-fifo-size . cr s" ! core ? s n d c" type cr s" ! extended explain source history define meta save validate safe-save restart recover rollback repl" type cr cd.!end ; 
+! : history  cd-history-path$ R/O OPEN-FILE DUP 0<> 0BRANCH DROP DROP cd.!end EXIT DROP >R cd-history-line-clear cd-history-ch 1 -4 local@ READ-FILE throw DUP 0BRANCH DROP cd-history-ch C@ DUP cd-eol? 0BRANCH DROP cd-history-line-flush BRANCH cd-history-line-add BRANCH DROP cd-history-line-flush -4 local@ CLOSE-FILE throw cd.!end rdrop ; 
+! : define  cd-rest-of-line cd-skip-spaces 2dup cd-define-ln ! cd-define-la ! 2drop cd-define-la @ cd-define-ln @ cd-define-name 0= 0BRANCH s" define_syntax" cd.#err cd.!end cd-consume-line 2drop EXIT 2dup cd-define-nn ! cd-define-na ! 2drop cd-define-na @ cd-define-nn @ FIND 0<> 0BRANCH s" define_exists" cd.#err cd.!end cd-consume-line EXIT s" define" cd-define-na @ cd-define-nn @ cd-history-event+ cd-consume-line cd-define-current-save cd-user-wordlist current ! cd-define-la @ cd-define-ln @ evaluate cd-define-current-restore cd.!ok cd.!end ; 
+! : meta  cd-rest-of-line cd-skip-spaces cd-consume-line DUP 0= 0BRANCH 2drop cd-meta-count @ 0 (?do) 0BRANCH (do) s" ! " type R@ cd-meta-kread type space R@ cd-meta-vread type cr 1 (+loop) 0BRANCH rdrop rdrop cd.!end EXIT cd-token DUP 0= 0BRANCH cd-5drop s" meta_syntax" cd.#err cd.!end EXIT DROP 2swap cd-skip-spaces 2swap DUP 0= 0BRANCH 2drop 2dup cd-meta-find DUP -1 = 0BRANCH DROP 2drop s" meta_missing" cd.#err cd.!end EXIT >R s" ! " type 2dup type space R> cd-meta-vread type cr 2drop cd.!end EXIT cd-token DUP 0= 0BRANCH cd-5drop 2drop s" meta_syntax" cd.#err cd.!end EXIT DROP cd-skip-spaces DUP 0<> 0BRANCH 2drop 2drop 2drop s" meta_syntax" cd.#err cd.!end EXIT 2drop 2dup cd-meta-tvn ! cd-meta-tva ! 2swap 2dup cd-meta-tkn ! cd-meta-tka ! 2swap cd-4drop cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-meta-set 0= 0BRANCH s" meta_full" cd.#err cd.!end EXIT cd-meta-save 0= 0BRANCH s" meta_io" cd.#err cd.!end EXIT s" meta" cd-meta-tka @ cd-meta-tkn @ cd-meta-tva @ cd-meta-tvn @ cd-history-event-kv cd.!ok cd.!end ; 
+! : save  cd-ensure-autostart remember s" save" cd-history-event cd.!ok cd.!end ; 
+! : validate  cd-validate? 0BRANCH cd.!ok BRANCH s" ! fail stack" type cr cd.!end ; 
+! : safe-save  cd-validate? 0BRANCH cd-ensure-autostart cd-lkg$ save-name remember s" safe-save" cd-history-event cd.!ok BRANCH s" ! fail validate" type cr cd.!end ; 
+! : restart  s" ! rebooting" type cr cd.!end s" restart" cd-history-event 100 ms bye ; 
+! : recover  s" recover" cd-history-event cd-myforth$ DELETE-FILE DROP cd-lkg$ DELETE-FILE DROP cd.!ok cd.!end 100 ms bye ; 
+! : rollback  1 cd-parse-int-or DUP 1 <> 0BRANCH DROP s" unsupported" cd.#err cd.!end EXIT DROP cd-lkg$ cd-file-exists? 0= 0BRANCH s" rollback_missing" cd.#err cd.!end EXIT s" rollback" cd-history-event cd.!ok cd.!end cd-lkg$ restore-name ; 
+! : repl  -1 cd-old-echo ! -1 cd-old-arrow ! -1 cd-exit ! -1 echo ! -1 arrow ! cd.!ok cd.!end ; 
+! : cd-boot  cd-safe-setup cd-safe-pressed? 0BRANCH -1 echo ! -1 arrow ! s" SAFE: pressed; staying in REPL" type cr BRANCH cd-node ; 
+! : cd-node  echo @ cd-old-echo ! arrow @ cd-old-arrow ! 'notfound @ cd-old-notfound ! 0 cd-exit ! 0 echo ! 0 arrow ! cd-error-reset 1073677372 'notfound ! cd-exit @ 0<> 0BRANCH -1 BRANCH refill 0= 0BRANCH 10 ms BRANCH 1073640912 catch ?dup 0BRANCH 0 state ! sp0 SP! fp0 FP! rp0 RP! cd-handle-exception 0 0BRANCH cd-old-notfound @ 'notfound ! cd-old-echo @ echo ! cd-old-arrow @ arrow ! ; 
+! : foo  123 ; 
+
+! end
+> history
+! 0define0meta0define0metaidnode1
+! 0metaidnode1
+! 1metaidnode2
+! 2metaidnode3
+! 3metaidnode1
+! 0metaidnode2
+! 0 meta id node3
+! 0 meta role gateway
+! 1 meta children 2
+! 2 meta units ticks
+! 3 meta pins gpio4
+! 4 meta ver thesis-0.1
+! 0 define 0 define 0 define 0 define : abcxyz123 7 ;
+! 1 define : abcxyz123 8 ;
+! 0 define : uniqueone 1 ;
+! 1 define : uniqueone 2 ;
+! 0 define : tempword 1 ;
+! 1 define : tempword 2 ;
+! 0 define  1 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 meta id node4
+! 0 meta id node5
+! 1 define  1 ;
+! 2 define  2 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 define  1 ;
+! 1 define  2 ;
+! 0 define uniqz1
+! 0 meta id node6
+! 0 meta id milestoneB
+! 1 meta role gateway
+! 2 meta ver thesis-0.1
+! 3 meta units ticks
+! 4 meta pins gpio4
+! 5 meta children 0
+! 6 define demo
+! 7 safe-save
+! 8 restart
+! 7 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! 3 safe-save
+! 4 restart
+! 0 safe-save
+! 1 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! 3 safe-save
+! 4 restart
+! 0 meta id node1
+! 1 meta role gateway
+! 2 define foo
+! 3 safe-save
+! 4 restart
+! end
