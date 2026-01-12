@@ -352,3 +352,223 @@ def draw_message(win: curses.window, message: str, is_error: bool = False) -> No
         win.addstr(y, max(0, x), message[:width], color | curses.A_BOLD)
     except curses.error:
         pass
+
+
+def draw_progress_bar(
+    win: curses.window,
+    y: int,
+    x: int,
+    width: int,
+    progress: float,
+    label: str = "",
+) -> None:
+    """Draw a progress bar.
+
+    Args:
+        win: Curses window.
+        y: Row position.
+        x: Column position.
+        width: Total width of the bar.
+        progress: Progress value 0.0 to 1.0.
+        label: Optional label to show after the bar.
+    """
+    bar_width = width - len(label) - 6  # Leave room for [, ], space, percentage
+    if bar_width < 5:
+        bar_width = 5
+
+    filled = int(bar_width * min(1.0, max(0.0, progress)))
+    empty = bar_width - filled
+
+    bar = "[" + "#" * filled + "-" * empty + "]"
+    pct = f" {int(progress * 100):3d}%"
+
+    try:
+        win.addstr(y, x, bar, curses.color_pair(COLOR_SUCCESS))
+        win.addstr(y, x + len(bar), pct)
+        if label:
+            win.addstr(y, x + len(bar) + len(pct) + 1, label)
+    except curses.error:
+        pass
+
+
+@dataclass
+class Checkbox:
+    """A toggleable checkbox."""
+
+    label: str
+    checked: bool = False
+
+    def toggle(self) -> None:
+        """Toggle the checkbox state."""
+        self.checked = not self.checked
+
+    def draw(self, win: curses.window, y: int, x: int, selected: bool = False) -> None:
+        """Draw the checkbox."""
+        check_char = "x" if self.checked else " "
+        text = f"[{check_char}] {self.label}"
+        attr = curses.A_REVERSE if selected else 0
+        try:
+            win.addstr(y, x, text, attr)
+        except curses.error:
+            pass
+
+
+@dataclass
+class FileBrowser:
+    """Simple file browser for selecting .cdsnap files."""
+
+    path: str = "."
+    files: list[str] = field(default_factory=list)
+    selected: int = 0
+    filter_ext: str = ".cdsnap"
+
+    def __post_init__(self) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Refresh the file list."""
+        from pathlib import Path
+
+        p = Path(self.path)
+        if not p.exists():
+            self.files = []
+            return
+
+        entries: list[str] = []
+        # Add parent directory option
+        if p.parent != p:
+            entries.append("..")
+
+        # Add directories
+        try:
+            for item in sorted(p.iterdir()):
+                if item.is_dir() and not item.name.startswith("."):
+                    entries.append(item.name + "/")
+                elif item.is_file():
+                    if not self.filter_ext or item.suffix == self.filter_ext:
+                        entries.append(item.name)
+        except PermissionError:
+            pass
+
+        self.files = entries
+        self.selected = min(self.selected, max(0, len(self.files) - 1))
+
+    def move_up(self) -> None:
+        """Move selection up."""
+        if self.files:
+            self.selected = (self.selected - 1) % len(self.files)
+
+    def move_down(self) -> None:
+        """Move selection down."""
+        if self.files:
+            self.selected = (self.selected + 1) % len(self.files)
+
+    def select(self) -> str | None:
+        """Select current item. Returns full path if file, or navigates if directory."""
+        from pathlib import Path
+
+        if not self.files:
+            return None
+
+        name = self.files[self.selected]
+
+        if name == "..":
+            self.path = str(Path(self.path).parent)
+            self.refresh()
+            return None
+        elif name.endswith("/"):
+            self.path = str(Path(self.path) / name[:-1])
+            self.refresh()
+            return None
+        else:
+            return str(Path(self.path) / name)
+
+    def get_selected_name(self) -> str:
+        """Get the name of the currently selected item."""
+        if not self.files:
+            return ""
+        return self.files[self.selected]
+
+    def draw(self, win: curses.window, y: int, x: int, height: int, width: int) -> None:
+        """Draw the file browser."""
+        # Show current path
+        path_display = f"Path: {self.path}"
+        if len(path_display) > width:
+            path_display = "..." + path_display[-(width - 3):]
+        try:
+            win.addstr(y, x, path_display, curses.A_DIM)
+        except curses.error:
+            pass
+
+        # Calculate visible range
+        visible_height = height - 1  # Account for path line
+        if not self.files:
+            try:
+                win.addstr(y + 1, x, "(no files)", curses.A_DIM)
+            except curses.error:
+                pass
+            return
+
+        # Scroll to keep selection visible
+        start_idx = 0
+        if self.selected >= visible_height:
+            start_idx = self.selected - visible_height + 1
+
+        for i, idx in enumerate(range(start_idx, min(start_idx + visible_height, len(self.files)))):
+            name = self.files[idx]
+            row = y + 1 + i
+            attr = curses.A_REVERSE if idx == self.selected else 0
+
+            # Indicate directories
+            if name.endswith("/"):
+                attr |= curses.A_BOLD
+
+            display = name[:width]
+            try:
+                win.addstr(row, x, display.ljust(width), attr)
+            except curses.error:
+                pass
+
+
+def draw_wizard_frame(
+    win: curses.window,
+    title: str,
+    height: int,
+    width: int,
+) -> tuple[int, int, int, int]:
+    """Draw a wizard dialog frame. Returns (start_y, start_x, inner_height, inner_width)."""
+    screen_height, screen_width = win.getmaxyx()
+
+    # Center the frame
+    start_y = (screen_height - height) // 2
+    start_x = (screen_width - width) // 2
+
+    try:
+        # Draw border
+        for y in range(height):
+            for x in range(width):
+                row = start_y + y
+                col = start_x + x
+                if 0 <= row < screen_height and 0 <= col < screen_width:
+                    if y == 0 or y == height - 1:
+                        win.addch(row, col, curses.ACS_HLINE)
+                    elif x == 0 or x == width - 1:
+                        win.addch(row, col, curses.ACS_VLINE)
+                    else:
+                        win.addch(row, col, " ")
+
+        # Corners
+        win.addch(start_y, start_x, curses.ACS_ULCORNER)
+        win.addch(start_y, start_x + width - 1, curses.ACS_URCORNER)
+        win.addch(start_y + height - 1, start_x, curses.ACS_LLCORNER)
+        win.addch(start_y + height - 1, start_x + width - 1, curses.ACS_LRCORNER)
+
+        # Title
+        title_x = start_x + (width - len(title) - 4) // 2
+        win.addstr(start_y, title_x, f" {title} ", curses.A_BOLD)
+
+    except curses.error:
+        pass
+
+    # Return inner dimensions
+    return start_y + 1, start_x + 2, height - 2, width - 4

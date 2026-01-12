@@ -22,6 +22,10 @@ from .widgets import (
     draw_confirm_dialog,
     draw_input_dialog,
     draw_message,
+    draw_progress_bar,
+    draw_wizard_frame,
+    Checkbox,
+    FileBrowser,
     COLOR_ERROR,
     COLOR_SUCCESS,
 )
@@ -39,6 +43,9 @@ class Screen(Enum):
     CONFIRM = auto()
     INPUT = auto()
     MESSAGE = auto()
+    LOAD_WIZARD = auto()
+    SNAPSHOT_WIZARD = auto()
+    RESTORE_WIZARD = auto()
 
 
 class Action(Enum):
@@ -88,6 +95,28 @@ class AppState:
     io_queue: queue.Queue = field(default_factory=queue.Queue)
     result_queue: queue.Queue = field(default_factory=queue.Queue)
 
+    # Load wizard state
+    load_progress: float = 0.0
+    load_total_lines: int = 0
+    load_current_line: int = 0
+    load_persist: Checkbox = field(default_factory=lambda: Checkbox("Persist to flash after loading"))
+    load_status: str = ""
+    load_running: bool = False
+
+    # Snapshot wizard state
+    snapshot_filename: str = ""
+    snapshot_defs_count: int = 0
+    snapshot_safe_save: Checkbox = field(default_factory=lambda: Checkbox("Run safe-save before snapshot"))
+    snapshot_status: str = ""
+
+    # Restore wizard state
+    restore_file_browser: FileBrowser | None = None
+    restore_snapshot_path: str = ""
+    restore_preview: list[str] = field(default_factory=list)
+    restore_progress: float = 0.0
+    restore_status: str = ""
+    restore_running: bool = False
+
 
 def create_main_menu(state: AppState) -> Menu:
     """Create the main menu."""
@@ -128,6 +157,265 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
         "q": Action.QUIT,
     }
     return key_map.get(key.lower())
+
+
+def _do_load(state: AppState, persist: bool) -> None:
+    """Execute load operation (runs in io_worker thread)."""
+    from ..session import SerialSession, SerialError
+    from ..protocol import probe, is_error
+    from pathlib import Path
+
+    # Find firmware file
+    firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "codignity.fs"
+    if not firmware_path.exists():
+        state.result_queue.put(("load_error", f"Firmware not found: {firmware_path}"))
+        return
+
+    # Read firmware lines
+    with open(firmware_path, "r", encoding="utf-8") as f:
+        lines = [line.rstrip() for line in f if line.strip() and not line.strip().startswith("\\")]
+
+    total_lines = len(lines)
+    state.result_queue.put(("load_start", total_lines))
+
+    try:
+        # Open session with short settle to interrupt autoexec
+        with SerialSession.open(port=state.port, settle_s=2.0, quiet=False) as session:
+            # Send interrupt to stop autoexec
+            session.send_line("")
+            time.sleep(0.3)
+            session.drain(0.2)
+
+            # Load each line
+            for i, line in enumerate(lines):
+                if not line:
+                    continue
+                session.send_repl(line, timeout_s=5.0)
+                state.result_queue.put(("load_progress", i + 1, total_lines))
+
+            # Enter protocol mode
+            state.result_queue.put(("load_status", "Entering protocol mode..."))
+            session.drain(0.2)
+            session.send_line("revive")
+            session.read_until(b" ok", 3.0)
+            session.drain(0.3)
+
+            # Validate
+            state.result_queue.put(("load_status", "Validating..."))
+            response = session.send_protocol("validate", timeout_s=3.0)
+            has_err, err_msg = is_error(response)
+            if has_err:
+                state.result_queue.put(("load_error", f"Validation failed: {err_msg}"))
+                return
+
+            # Persist if requested
+            if persist:
+                state.result_queue.put(("load_status", "Saving to flash..."))
+                response = session.send_protocol("safe-save", timeout_s=5.0)
+                has_err, err_msg = is_error(response)
+                if has_err:
+                    state.result_queue.put(("load_error", f"Safe-save failed: {err_msg}"))
+                    return
+
+                state.result_queue.put(("load_status", "Restarting..."))
+                session.send_protocol("restart", timeout_s=3.0)
+
+        state.result_queue.put(("load_done", persist))
+
+    except SerialError as e:
+        state.result_queue.put(("load_error", str(e)))
+
+
+def _do_snapshot_create(state: AppState, filename: str, safe_save: bool) -> None:
+    """Execute snapshot create operation (runs in io_worker thread)."""
+    from ..session import SerialSession, SerialError
+    from ..protocol import probe, is_error
+    from ..snapshot import Snapshot
+    from ..defs_log import load_defs
+    from pathlib import Path
+    from datetime import datetime, timezone
+
+    try:
+        with SerialSession.open(port=state.port, settle_s=5.0) as session:
+            # Probe for identity
+            result = probe(session, timeout_s=3.0)
+            node_id = result.node_id or "unknown"
+
+            # Get meta dump
+            response = session.send_protocol("meta", timeout_s=3.0)
+            meta = {}
+            for line in response.splitlines():
+                if line.startswith("! ") and not line.startswith("! end"):
+                    parts = line[2:].split(" ", 1)
+                    if len(parts) == 2:
+                        meta[parts[0]] = parts[1]
+
+            # Load defs from log
+            defs = load_defs(node_id)
+
+            # Safe-save if requested
+            if safe_save:
+                state.result_queue.put(("snapshot_status", "Running safe-save..."))
+                response = session.send_protocol("safe-save", timeout_s=5.0)
+                has_err, err_msg = is_error(response)
+                if has_err:
+                    state.result_queue.put(("snapshot_error", f"Safe-save failed: {err_msg}"))
+                    return
+
+            # Create snapshot
+            snapshot = Snapshot(
+                date=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                node_id=node_id,
+                role=result.role or "",
+                ver=result.ver or "",
+                meta=meta,
+                defs=defs,
+                notes={},
+            )
+
+            # Save to file
+            snapshot.save(Path(filename))
+            state.result_queue.put(("snapshot_done", filename, len(defs)))
+
+    except SerialError as e:
+        state.result_queue.put(("snapshot_error", str(e)))
+    except Exception as e:
+        state.result_queue.put(("snapshot_error", f"Unexpected error: {e}"))
+
+
+def _do_restore_preview(state: AppState, snapshot_path: str) -> None:
+    """Load snapshot and generate preview (runs in io_worker thread)."""
+    from ..snapshot import Snapshot
+    from pathlib import Path
+
+    try:
+        snapshot = Snapshot.load(Path(snapshot_path))
+        preview = [
+            f"Date: {snapshot.date}",
+            f"Node: {snapshot.node_id} ({snapshot.role})",
+            f"Version: {snapshot.ver}",
+            f"Meta: {len(snapshot.meta)} settings",
+            f"Defs: {len(snapshot.defs)} definitions",
+        ]
+        if snapshot.defs:
+            preview.append("")
+            preview.append("Definitions:")
+            for d in snapshot.defs[:5]:
+                # Extract name from define
+                name = d.split()[2] if len(d.split()) > 2 else d[:30]
+                preview.append(f"  + {name}")
+            if len(snapshot.defs) > 5:
+                preview.append(f"  ... and {len(snapshot.defs) - 5} more")
+
+        state.result_queue.put(("restore_preview_ok", preview))
+
+    except Exception as e:
+        state.result_queue.put(("restore_preview_error", str(e)))
+
+
+def _do_restore(state: AppState, snapshot_path: str) -> None:
+    """Execute restore operation (runs in io_worker thread)."""
+    from ..session import SerialSession, SerialError
+    from ..protocol import probe, is_error
+    from ..snapshot import Snapshot
+    from pathlib import Path
+
+    try:
+        snapshot = Snapshot.load(Path(snapshot_path))
+
+        # Find firmware
+        firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "codignity.fs"
+        if not firmware_path.exists():
+            state.result_queue.put(("restore_error", f"Firmware not found: {firmware_path}"))
+            return
+
+        with open(firmware_path, "r", encoding="utf-8") as f:
+            lines = [line.rstrip() for line in f if line.strip() and not line.strip().startswith("\\")]
+
+        total_steps = len(lines) + len(snapshot.meta) + len(snapshot.defs) + 3  # +3 for validate, save, restart
+        current_step = 0
+
+        with SerialSession.open(port=state.port, settle_s=2.0, quiet=False) as session:
+            # Interrupt autoexec
+            session.send_line("")
+            time.sleep(0.3)
+            session.drain(0.2)
+
+            # Load firmware
+            state.result_queue.put(("restore_status", "Loading firmware..."))
+            for i, line in enumerate(lines):
+                if not line:
+                    continue
+                session.send_repl(line, timeout_s=5.0)
+                current_step += 1
+                state.result_queue.put(("restore_progress", current_step / total_steps))
+
+            # Enter protocol mode
+            state.result_queue.put(("restore_status", "Entering protocol mode..."))
+            session.drain(0.2)
+            session.send_line("revive")
+            session.read_until(b" ok", 3.0)
+            session.drain(0.3)
+
+            # Apply meta settings
+            state.result_queue.put(("restore_status", "Applying meta settings..."))
+            for key, value in snapshot.meta.items():
+                cmd = f"meta {key} {value}"
+                response = session.send_protocol(cmd, timeout_s=3.0)
+                has_err, err_msg = is_error(response)
+                if has_err:
+                    state.result_queue.put(("restore_error", f"Meta error: {err_msg}"))
+                    return
+                current_step += 1
+                state.result_queue.put(("restore_progress", current_step / total_steps))
+
+            # Apply definitions
+            state.result_queue.put(("restore_status", "Applying definitions..."))
+            for defn in snapshot.defs:
+                response = session.send_protocol(defn, timeout_s=3.0)
+                has_err, err_msg = is_error(response)
+                if has_err:
+                    state.result_queue.put(("restore_error", f"Define error: {err_msg}"))
+                    return
+                current_step += 1
+                state.result_queue.put(("restore_progress", current_step / total_steps))
+
+            # Validate
+            state.result_queue.put(("restore_status", "Validating..."))
+            response = session.send_protocol("validate", timeout_s=3.0)
+            has_err, err_msg = is_error(response)
+            if has_err:
+                state.result_queue.put(("restore_error", f"Validation failed: {err_msg}"))
+                return
+            current_step += 1
+            state.result_queue.put(("restore_progress", current_step / total_steps))
+
+            # Save
+            state.result_queue.put(("restore_status", "Saving to flash..."))
+            response = session.send_protocol("safe-save", timeout_s=5.0)
+            has_err, err_msg = is_error(response)
+            if has_err:
+                state.result_queue.put(("restore_error", f"Safe-save failed: {err_msg}"))
+                return
+            current_step += 1
+            state.result_queue.put(("restore_progress", current_step / total_steps))
+
+            # Restart
+            state.result_queue.put(("restore_status", "Restarting..."))
+            session.send_protocol("restart", timeout_s=3.0)
+            current_step += 1
+            state.result_queue.put(("restore_progress", 1.0))
+
+        # Re-probe after restart
+        time.sleep(2)
+        with SerialSession.open(port=state.port, settle_s=5.0) as session:
+            result = probe(session, timeout_s=3.0)
+            state.result_queue.put(("restore_done", result.node_id, result.role))
+
+    except SerialError as e:
+        state.result_queue.put(("restore_error", str(e)))
+    except Exception as e:
+        state.result_queue.put(("restore_error", f"Unexpected error: {e}"))
 
 
 def io_worker(state: AppState) -> None:
@@ -226,6 +514,23 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("?", timeout_s=3.0)
                     state.result_queue.put(("identity_ok", response))
 
+            elif action == "load":
+                persist = args[0] if args else False
+                _do_load(state, persist)
+
+            elif action == "snapshot_create":
+                filename = args[0] if args else "snapshot.cdsnap"
+                safe_save = args[1] if len(args) > 1 else False
+                _do_snapshot_create(state, filename, safe_save)
+
+            elif action == "restore_preview":
+                snapshot_path = args[0]
+                _do_restore_preview(state, snapshot_path)
+
+            elif action == "restore":
+                snapshot_path = args[0]
+                _do_restore(state, snapshot_path)
+
         except SerialError as e:
             state.result_queue.put(("error", str(e)))
         except Exception as e:
@@ -281,6 +586,79 @@ def process_results(state: AppState) -> None:
             error_msg = result[1]
             state.log.append(f"Validation failed: {error_msg}", COLOR_ERROR)
 
+        # Load wizard results
+        elif result_type == "load_start":
+            state.load_total_lines = result[1]
+            state.load_current_line = 0
+            state.load_progress = 0.0
+            state.load_status = "Loading firmware..."
+
+        elif result_type == "load_progress":
+            state.load_current_line = result[1]
+            state.load_total_lines = result[2]
+            state.load_progress = result[1] / result[2] if result[2] > 0 else 0
+
+        elif result_type == "load_status":
+            state.load_status = result[1]
+
+        elif result_type == "load_done":
+            persist = result[1]
+            state.load_running = False
+            state.load_progress = 1.0
+            state.load_status = "Load complete!" + (" (persisted)" if persist else "")
+            state.log.append("Firmware loaded successfully", COLOR_SUCCESS)
+            state.screen = Screen.HOME
+
+        elif result_type == "load_error":
+            error_msg = result[1]
+            state.load_running = False
+            state.load_status = f"Error: {error_msg}"
+            state.log.append(f"Load failed: {error_msg}", COLOR_ERROR)
+
+        # Snapshot wizard results
+        elif result_type == "snapshot_status":
+            state.snapshot_status = result[1]
+
+        elif result_type == "snapshot_done":
+            filename = result[1]
+            defs_count = result[2]
+            state.log.append(f"Snapshot saved: {filename} ({defs_count} defs)", COLOR_SUCCESS)
+            state.screen = Screen.HOME
+
+        elif result_type == "snapshot_error":
+            error_msg = result[1]
+            state.snapshot_status = f"Error: {error_msg}"
+            state.log.append(f"Snapshot failed: {error_msg}", COLOR_ERROR)
+
+        # Restore wizard results
+        elif result_type == "restore_preview_ok":
+            state.restore_preview = result[1]
+
+        elif result_type == "restore_preview_error":
+            error_msg = result[1]
+            state.restore_preview = [f"Error loading snapshot: {error_msg}"]
+
+        elif result_type == "restore_status":
+            state.restore_status = result[1]
+
+        elif result_type == "restore_progress":
+            state.restore_progress = result[1]
+
+        elif result_type == "restore_done":
+            node_id = result[1]
+            role = result[2]
+            state.restore_running = False
+            state.restore_progress = 1.0
+            state.restore_status = "Restore complete!"
+            state.log.append(f"Restored successfully: {node_id} ({role})", COLOR_SUCCESS)
+            state.screen = Screen.HOME
+
+        elif result_type == "restore_error":
+            error_msg = result[1]
+            state.restore_running = False
+            state.restore_status = f"Error: {error_msg}"
+            state.log.append(f"Restore failed: {error_msg}", COLOR_ERROR)
+
 
 def handle_input(state: AppState, key: int) -> None:
     """Handle keyboard input based on current screen."""
@@ -295,6 +673,12 @@ def handle_input(state: AppState, key: int) -> None:
     elif state.screen == Screen.MESSAGE:
         # Any key dismisses message
         state.screen = Screen.HOME
+    elif state.screen == Screen.LOAD_WIZARD:
+        handle_load_wizard_input(state, key)
+    elif state.screen == Screen.SNAPSHOT_WIZARD:
+        handle_snapshot_wizard_input(state, key)
+    elif state.screen == Screen.RESTORE_WIZARD:
+        handle_restore_wizard_input(state, key)
 
 
 def handle_home_input(state: AppState, key: int) -> None:
@@ -386,6 +770,71 @@ def handle_text_input(state: AppState, key: int) -> None:
         state.input_cursor += 1
 
 
+def handle_load_wizard_input(state: AppState, key: int) -> None:
+    """Handle input on the load wizard screen."""
+    if state.load_running:
+        # Can't interact while loading
+        return
+
+    if key == 27:  # Escape
+        state.screen = Screen.HOME
+    elif key == ord(" "):
+        # Toggle persist checkbox
+        state.load_persist.toggle()
+    elif key == ord("\n") or key == ord("\r"):
+        # Start loading
+        state.load_running = True
+        state.load_status = "Starting load..."
+        state.io_queue.put(("load", state.load_persist.checked))
+
+
+def handle_snapshot_wizard_input(state: AppState, key: int) -> None:
+    """Handle input on the snapshot wizard screen."""
+    if key == 27:  # Escape
+        state.screen = Screen.HOME
+    elif key == ord(" "):
+        # Toggle safe-save checkbox
+        state.snapshot_safe_save.toggle()
+    elif key == ord("\n") or key == ord("\r"):
+        # Start snapshot creation
+        state.snapshot_status = "Creating snapshot..."
+        state.io_queue.put(("snapshot_create", state.snapshot_filename, state.snapshot_safe_save.checked))
+
+
+def handle_restore_wizard_input(state: AppState, key: int) -> None:
+    """Handle input on the restore wizard screen."""
+    if state.restore_running:
+        # Can't interact while restoring
+        return
+
+    if key == 27:  # Escape
+        if state.restore_snapshot_path:
+            # Go back to file selection
+            state.restore_snapshot_path = ""
+            state.restore_preview = []
+        else:
+            state.screen = Screen.HOME
+    elif state.restore_file_browser and not state.restore_snapshot_path:
+        # File browser mode
+        if key == curses.KEY_UP or key == ord("k"):
+            state.restore_file_browser.move_up()
+        elif key == curses.KEY_DOWN or key == ord("j"):
+            state.restore_file_browser.move_down()
+        elif key == ord("\n") or key == ord("\r"):
+            result = state.restore_file_browser.select()
+            if result:
+                # File selected, load preview
+                state.restore_snapshot_path = result
+                state.io_queue.put(("restore_preview", result))
+    elif state.restore_snapshot_path:
+        # Preview mode
+        if key == ord("\n") or key == ord("\r"):
+            # Confirm restore
+            state.restore_running = True
+            state.restore_status = "Restoring..."
+            state.io_queue.put(("restore", state.restore_snapshot_path))
+
+
 def execute_action(state: AppState, action: Action | None) -> None:
     """Execute an action."""
     if action is None:
@@ -429,28 +878,138 @@ def execute_action(state: AppState, action: Action | None) -> None:
         state.log.scroll_offset = 0
 
     elif action == Action.LOAD:
-        state.message = "Load not yet implemented in TUI"
-        state.message_is_error = True
-        state.screen = Screen.MESSAGE
-        # TODO(thesis): implement LOAD wizard (reuse CLI `cmd_load` algorithm).
+        # Initialize load wizard state
+        state.load_progress = 0.0
+        state.load_total_lines = 0
+        state.load_current_line = 0
+        state.load_persist.checked = False
+        state.load_status = "Ready to load firmware"
+        state.load_running = False
+        state.screen = Screen.LOAD_WIZARD
 
     elif action == Action.SNAPSHOT:
-        state.message = "Snapshot not yet implemented in TUI"
-        state.message_is_error = True
-        state.screen = Screen.MESSAGE
-        # TODO(thesis): implement SNAPSHOT wizard (path picker + summary + optional safe-save).
+        # Initialize snapshot wizard state
+        from datetime import datetime
+        state.snapshot_filename = f"snapshot-{datetime.now().strftime('%Y%m%d-%H%M%S')}.cdsnap"
+        state.snapshot_defs_count = 0
+        state.snapshot_safe_save.checked = False
+        state.snapshot_status = ""
+        state.screen = Screen.SNAPSHOT_WIZARD
 
     elif action == Action.RESTORE:
-        state.message = "Restore not yet implemented in TUI"
-        state.message_is_error = True
-        state.screen = Screen.MESSAGE
-        # TODO(thesis): implement RESTORE wizard (diff preview + confirm + restore algorithm).
+        # Initialize restore wizard state
+        state.restore_file_browser = FileBrowser(path=".", filter_ext=".cdsnap")
+        state.restore_snapshot_path = ""
+        state.restore_preview = []
+        state.restore_progress = 0.0
+        state.restore_status = ""
+        state.restore_running = False
+        state.screen = Screen.RESTORE_WIZARD
 
 
 def execute_confirmed_action(state: AppState, action: Action) -> None:
     """Execute an action after confirmation."""
     # TODO(thesis): wire confirmation modal to destructive operations (e.g., restart/rollback).
     pass
+
+
+def draw_load_wizard(win: curses.window, state: AppState) -> None:
+    """Draw the load firmware wizard."""
+    y, x, inner_h, inner_w = draw_wizard_frame(win, "Load Codignity", 12, 50)
+
+    try:
+        # Status message
+        win.addstr(y + 1, x, state.load_status[:inner_w])
+
+        # Progress bar (if loading)
+        if state.load_running or state.load_progress > 0:
+            lines_text = f"{state.load_current_line}/{state.load_total_lines} lines"
+            draw_progress_bar(win, y + 3, x, inner_w, state.load_progress, lines_text)
+
+        # Persist checkbox (only if not running)
+        if not state.load_running:
+            state.load_persist.draw(win, y + 5, x)
+
+            # Instructions
+            win.addstr(y + 7, x, "Press Enter to start loading", curses.A_DIM)
+            win.addstr(y + 8, x, "Press Escape to cancel", curses.A_DIM)
+        else:
+            win.addstr(y + 7, x, "Loading in progress...", curses.A_DIM)
+
+    except curses.error:
+        pass
+
+
+def draw_snapshot_wizard(win: curses.window, state: AppState) -> None:
+    """Draw the snapshot creation wizard."""
+    y, x, inner_h, inner_w = draw_wizard_frame(win, "Create Snapshot", 14, 55)
+
+    try:
+        # Filename
+        win.addstr(y + 1, x, "Filename:")
+        win.addstr(y + 2, x, state.snapshot_filename[:inner_w], curses.A_UNDERLINE)
+
+        # Node info
+        if state.node_id:
+            win.addstr(y + 4, x, f"Node: {state.node_id} ({state.role or 'unknown'})")
+
+        # Safe-save checkbox
+        state.snapshot_safe_save.draw(win, y + 6, x)
+
+        # Status
+        if state.snapshot_status:
+            win.addstr(y + 8, x, state.snapshot_status[:inner_w])
+
+        # Instructions
+        win.addstr(y + 10, x, "Press Enter to create snapshot", curses.A_DIM)
+        win.addstr(y + 11, x, "Press Escape to cancel", curses.A_DIM)
+
+    except curses.error:
+        pass
+
+
+def draw_restore_wizard(win: curses.window, state: AppState) -> None:
+    """Draw the restore wizard."""
+    if state.restore_snapshot_path:
+        # Preview mode
+        y, x, inner_h, inner_w = draw_wizard_frame(win, "Restore Snapshot", 18, 55)
+
+        try:
+            # Show snapshot path
+            path_display = state.restore_snapshot_path
+            if len(path_display) > inner_w:
+                path_display = "..." + path_display[-(inner_w - 3):]
+            win.addstr(y + 1, x, path_display, curses.A_DIM)
+
+            # Preview info
+            for i, line in enumerate(state.restore_preview[:10]):
+                if y + 3 + i < y + inner_h - 4:
+                    win.addstr(y + 3 + i, x, line[:inner_w])
+
+            # Progress bar (if restoring)
+            if state.restore_running:
+                draw_progress_bar(win, y + inner_h - 4, x, inner_w, state.restore_progress)
+                win.addstr(y + inner_h - 3, x, state.restore_status[:inner_w])
+            else:
+                # Instructions
+                win.addstr(y + inner_h - 3, x, "Press Enter to restore, Escape to go back", curses.A_DIM)
+
+        except curses.error:
+            pass
+    else:
+        # File browser mode
+        y, x, inner_h, inner_w = draw_wizard_frame(win, "Select Snapshot", 16, 55)
+
+        try:
+            win.addstr(y + 1, x, "Select a .cdsnap file:", curses.A_DIM)
+
+            if state.restore_file_browser:
+                state.restore_file_browser.draw(win, y + 3, x, inner_h - 5, inner_w)
+
+            win.addstr(y + inner_h - 2, x, "Enter: Select, Escape: Cancel", curses.A_DIM)
+
+        except curses.error:
+            pass
 
 
 def draw_screen(win: curses.window, state: AppState) -> None:
@@ -494,6 +1053,12 @@ def draw_screen(win: curses.window, state: AppState) -> None:
         )
     elif state.screen == Screen.MESSAGE:
         draw_message(win, state.message, state.message_is_error)
+    elif state.screen == Screen.LOAD_WIZARD:
+        draw_load_wizard(win, state)
+    elif state.screen == Screen.SNAPSHOT_WIZARD:
+        draw_snapshot_wizard(win, state)
+    elif state.screen == Screen.RESTORE_WIZARD:
+        draw_restore_wizard(win, state)
 
     win.refresh()
 
