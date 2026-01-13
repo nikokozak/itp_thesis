@@ -62,6 +62,7 @@ class Screen(Enum):
     LOAD_WIZARD = auto()
     SNAPSHOT_WIZARD = auto()
     RESTORE_WIZARD = auto()
+    PINS = auto()  # Pins Inspector screen
 
 
 class Action(Enum):
@@ -79,6 +80,7 @@ class Action(Enum):
     CLEAR = auto()
     SEND = auto()
     HELP = auto()
+    PINS = auto()  # Open Pins Inspector
 
 
 @dataclass
@@ -136,6 +138,13 @@ class AppState:
     restore_status: str = ""
     restore_running: bool = False
 
+    # Pins Inspector state
+    pins_data: dict = field(default_factory=dict)  # gpio -> PinState
+    pins_board_id: str | None = None
+    pins_selected: int = 0  # Currently selected GPIO index
+    pins_gpios: list = field(default_factory=list)  # Sorted list of GPIO numbers
+    pins_loading: bool = False
+
 
 def create_main_menu(state: AppState) -> Menu:
     """Create the main menu."""
@@ -143,6 +152,7 @@ def create_main_menu(state: AppState) -> Menu:
 
     items = [
         MenuItem("Probe / Connect", "p", enabled=True),
+        MenuItem("Pins Inspector", "g", enabled=connected),
         MenuItem("Refresh Meta", "m", enabled=connected),
         MenuItem("History", "h", enabled=connected),
         MenuItem("Source", "s", enabled=connected),
@@ -162,6 +172,7 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
     """Map menu selection key to action."""
     key_map = {
         "p": Action.PROBE,
+        "g": Action.PINS,
         "m": Action.META,
         "h": Action.HISTORY,
         "s": Action.SOURCE,
@@ -598,6 +609,17 @@ def io_worker(state: AppState) -> None:
                     snapshot_path = args[0]
                     _do_restore(state, snapshot_path)
 
+                elif action == "pins":
+                    from ..pins import parse_pins_response
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol("pins", timeout_s=5.0)
+                    board_id, pins_data = parse_pins_response(response)
+                    state.result_queue.put(("pins_ok", board_id, pins_data))
+
             except SerialError as e:
                 # Serial error - close session so next command reconnects
                 close_persistent()
@@ -774,6 +796,16 @@ def process_results(state: AppState) -> None:
             state.restore_status = f"Error: {error_msg}"
             state.log.append(f"Restore failed: {error_msg}", COLOR_ERROR)
 
+        # Pins Inspector results
+        elif result_type == "pins_ok":
+            board_id = result[1]
+            pins_data = result[2]
+            state.pins_data = pins_data
+            state.pins_board_id = board_id
+            state.pins_gpios = sorted(pins_data.keys())
+            state.pins_loading = False
+            state.log.append(f"Pins loaded ({len(pins_data)} GPIOs)", COLOR_SUCCESS)
+
 
 def handle_input(state: AppState, key: int) -> None:
     """Handle keyboard input based on current screen."""
@@ -794,6 +826,8 @@ def handle_input(state: AppState, key: int) -> None:
         handle_snapshot_wizard_input(state, key)
     elif state.screen == Screen.RESTORE_WIZARD:
         handle_restore_wizard_input(state, key)
+    elif state.screen == Screen.PINS:
+        handle_pins_input(state, key)
 
 
 def handle_home_input(state: AppState, key: int) -> None:
@@ -836,6 +870,11 @@ def handle_home_input(state: AppState, key: int) -> None:
             execute_action(state, Action.SNAPSHOT)
     elif key == ord("r") or key == ord("R"):
         execute_action(state, Action.RESTORE)
+    elif key == ord("g") or key == ord("G"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.PINS)
     elif key == ord("x") or key == ord("X"):
         execute_action(state, Action.CLEAR)
     elif key == curses.KEY_PPAGE:
@@ -983,6 +1022,29 @@ def handle_restore_wizard_input(state: AppState, key: int) -> None:
             state.io_queue.put(("restore", state.restore_snapshot_path))
 
 
+def handle_pins_input(state: AppState, key: int) -> None:
+    """Handle input on the Pins Inspector screen."""
+    if key == 27:  # Escape
+        state.screen = Screen.HOME
+    elif key == ord("r") or key == ord("R"):
+        # Refresh pins
+        state.pins_loading = True
+        state.io_queue.put(("pins",))
+    elif key == curses.KEY_UP or key == ord("k"):
+        # Move selection up
+        if state.pins_gpios and state.pins_selected > 0:
+            state.pins_selected -= 1
+    elif key == curses.KEY_DOWN or key == ord("j"):
+        # Move selection down
+        if state.pins_gpios and state.pins_selected < len(state.pins_gpios) - 1:
+            state.pins_selected += 1
+    elif key == curses.KEY_HOME:
+        state.pins_selected = 0
+    elif key == curses.KEY_END:
+        if state.pins_gpios:
+            state.pins_selected = len(state.pins_gpios) - 1
+
+
 def execute_action(state: AppState, action: Action | None) -> None:
     """Execute an action."""
     if action is None:
@@ -1051,6 +1113,12 @@ def execute_action(state: AppState, action: Action | None) -> None:
         state.restore_status = ""
         state.restore_running = False
         state.screen = Screen.RESTORE_WIZARD
+
+    elif action == Action.PINS:
+        # Open Pins Inspector screen and fetch pin data
+        state.pins_loading = True
+        state.screen = Screen.PINS
+        state.io_queue.put(("pins",))
 
 
 def execute_confirmed_action(state: AppState, action: Action) -> None:
@@ -1156,6 +1224,131 @@ def draw_restore_wizard(win: curses.window, state: AppState) -> None:
 
         except curses.error:
             pass
+
+
+def draw_pins(win: curses.window, state: AppState) -> None:
+    """Draw the Pins Inspector screen."""
+    from ..boards import get_manifest
+
+    height, width = win.getmaxyx()
+    frame_height = min(height - 4, 35)
+    frame_width = min(width - 4, 70)
+
+    y, x, inner_h, inner_w = draw_wizard_frame(win, "Pins Inspector", frame_height, frame_width)
+
+    try:
+        if state.pins_loading:
+            win.addstr(y + 1, x, "Loading pin data...", curses.A_DIM)
+            return
+
+        if not state.pins_data:
+            win.addstr(y + 1, x, "No pin data. Press 'r' to refresh.", curses.A_DIM)
+            return
+
+        # Get board manifest for footprint view
+        board = None
+        if state.pins_board_id:
+            board = get_manifest(state.pins_board_id)
+
+        # Get selected GPIO
+        selected_gpio = None
+        if state.pins_gpios and 0 <= state.pins_selected < len(state.pins_gpios):
+            selected_gpio = state.pins_gpios[state.pins_selected]
+
+        if board:
+            # Board footprint view (two columns)
+            left_pins = board.left_column()
+            right_pins = board.right_column()
+            max_rows = max(len(left_pins), len(right_pins))
+
+            win.addstr(y + 1, x, f"{board.display_name}", curses.A_BOLD)
+            win.addstr(y + 2, x, "=" * min(inner_w, 50))
+
+            col1_x = x
+            col2_x = x + 26  # Space for left column
+
+            for i in range(min(max_rows, inner_h - 6)):
+                row_y = y + 4 + i
+
+                # Left column
+                if i < len(left_pins):
+                    pin_def = left_pins[i]
+                    cell = _format_pin_cell_tui(pin_def, state.pins_data, selected_gpio)
+                    attr = curses.A_REVERSE if pin_def.gpio == selected_gpio else 0
+                    win.addstr(row_y, col1_x, cell[:24], attr)
+
+                # Right column
+                if i < len(right_pins):
+                    pin_def = right_pins[i]
+                    cell = _format_pin_cell_tui(pin_def, state.pins_data, selected_gpio)
+                    attr = curses.A_REVERSE if pin_def.gpio == selected_gpio else 0
+                    if col2_x + 24 < x + inner_w:
+                        win.addstr(row_y, col2_x, cell[:24], attr)
+
+        else:
+            # Simple list view (no board manifest)
+            win.addstr(y + 1, x, f"Board: {state.pins_board_id or 'unknown'}", curses.A_BOLD)
+
+            list_start = y + 3
+            visible_count = inner_h - 5
+
+            for i, gpio in enumerate(state.pins_gpios[:visible_count]):
+                state_data = state.pins_data.get(gpio)
+                if state_data:
+                    level = state_data.level if state_data.level is not None else "-"
+                    owner = state_data.owner[:7] if state_data.owner else "-"
+                    line = f"GPIO{gpio:02d}: M={state_data.mode[:3]:3s} L={level} O={owner}"
+                else:
+                    line = f"GPIO{gpio:02d}: ?"
+
+                attr = curses.A_REVERSE if gpio == selected_gpio else 0
+                win.addstr(list_start + i, x, line[:inner_w], attr)
+
+        # Pin details box
+        if selected_gpio is not None and selected_gpio in state.pins_data:
+            pin_state = state.pins_data[selected_gpio]
+            detail_y = y + inner_h - 5
+            win.addstr(detail_y, x, "─" * min(inner_w, 50))
+            win.addstr(detail_y + 1, x, f"GPIO {selected_gpio}:", curses.A_BOLD)
+
+            level = pin_state.level if pin_state.level is not None else "-"
+            owner = pin_state.owner or "-"
+            flags = ",".join(pin_state.flags) if pin_state.flags else "-"
+
+            win.addstr(detail_y + 2, x, f"Mode: {pin_state.mode}  Level: {level}  Pull: {pin_state.pull}")
+            win.addstr(detail_y + 3, x, f"Owner: {owner}  Flags: {flags}")
+
+        # Instructions
+        win.addstr(y + inner_h - 1, x, "j/k:Move  r:Refresh  Esc:Back", curses.A_DIM)
+
+    except curses.error:
+        pass
+
+
+def _format_pin_cell_tui(pin_def, pins_data: dict, selected_gpio: int | None) -> str:
+    """Format a pin cell for TUI display."""
+    if pin_def.gpio is None:
+        # Power/ground/control pin
+        kind_marker = {"power": "+", "gnd": "-", "control": "~"}.get(pin_def.kind, " ")
+        return f"{pin_def.label:4s} {kind_marker}"
+
+    gpio = pin_def.gpio
+    state = pins_data.get(gpio)
+
+    if state is None:
+        return f"{pin_def.label:4s} G{gpio:02d} ?"
+
+    level = str(state.level) if state.level is not None else "-"
+    mode_abbr = state.mode[0].upper() if state.mode else "?"
+    owner = state.owner[:4] if state.owner else "-"
+
+    warn = ""
+    if "strapping" in state.flags:
+        warn = "!"
+    elif "flash" in state.flags:
+        warn = "X"
+
+    return f"{pin_def.label:4s} G{gpio:02d} L{level} M{mode_abbr} {owner:4s}{warn}"
 
 
 def draw_screen(win: curses.window, state: AppState) -> None:
@@ -1310,6 +1503,8 @@ def draw_screen(win: curses.window, state: AppState) -> None:
         draw_snapshot_wizard(win, state)
     elif state.screen == Screen.RESTORE_WIZARD:
         draw_restore_wizard(win, state)
+    elif state.screen == Screen.PINS:
+        draw_pins(win, state)
 
     win.refresh()
 

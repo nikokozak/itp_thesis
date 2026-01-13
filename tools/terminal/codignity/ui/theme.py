@@ -51,11 +51,12 @@ def init_colors() -> bool:
 
 # Key hints
 KEY_HINTS = {
-    "home": "p:Probe  m:Meta  h:Hist  s:Src  v:Val  l:Load  c:Snap  r:Rest  e:Help  Enter:Cmd  Tab:Menu  q:Quit",
+    "home": "p:Probe  g:Pins  m:Meta  h:Hist  l:Load  c:Snap  r:Rest  Tab:Menu  q:Quit",
     "menu": "j/k or Arrows:Navigate  Enter:Select  Esc:Close",
     "confirm": "y:Yes  n:No  Esc:Cancel",
     "input": "Enter:Submit  Esc:Cancel",
     "load_wizard": "Space:Toggle  Enter:Start  Esc:Cancel",
     "snapshot_wizard": "Space:Toggle  Enter:Create  Esc:Cancel",
     "restore_wizard": "Arrows:Navigate  Enter:Select/Restore  Esc:Cancel",
+    "pins": "j/k:Navigate  r:Refresh  Esc:Back",
 }
