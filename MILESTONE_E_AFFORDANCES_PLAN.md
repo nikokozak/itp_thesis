@@ -169,6 +169,46 @@ Manifest fields:
   - `kind`: `power|gnd|signal|control`
   - `notes`: optional
 
+**DOIT ESP32 DEVKIT V1 (30‑pin) starter mapping (verify against silkscreen):**
+
+Assume the board is oriented with **USB at the bottom** and the antenna at the top. Define positions as:
+- `L1..L15`: left header **top → bottom**
+- `R1..R15`: right header **top → bottom**
+
+Left header (top → bottom):
+- `L1` `3V3` (power)
+- `L2` `GND` (ground)
+- `L3` `D15` `gpio=15`
+- `L4` `D2` `gpio=2`
+- `L5` `D4` `gpio=4` *(SAFE pin in this thesis build)*
+- `L6` `RX2` `gpio=16`
+- `L7` `TX2` `gpio=17`
+- `L8` `D5` `gpio=5`
+- `L9` `D18` `gpio=18`
+- `L10` `D19` `gpio=19`
+- `L11` `D21` `gpio=21`
+- `L12` `RX0` `gpio=3`
+- `L13` `TX0` `gpio=1`
+- `L14` `D22` `gpio=22`
+- `L15` `D23` `gpio=23`
+
+Right header (top → bottom):
+- `R1` `VIN` (power)
+- `R2` `GND` (ground)
+- `R3` `D13` `gpio=13`
+- `R4` `D12` `gpio=12`
+- `R5` `D14` `gpio=14`
+- `R6` `D27` `gpio=27`
+- `R7` `D26` `gpio=26`
+- `R8` `D25` `gpio=25`
+- `R9` `D33` `gpio=33`
+- `R10` `D32` `gpio=32`
+- `R11` `D35` `gpio=35` *(input‑only)*
+- `R12` `D34` `gpio=34` *(input‑only)*
+- `R13` `VN` `gpio=39` *(input‑only; ADC)*
+- `R14` `VP` `gpio=36` *(input‑only; ADC)*
+- `R15` `EN` (control / reset enable; not a GPIO)
+
 ### 3.2 Protocol parsing helpers
 Add `codignity/pins.py`:
 - `PinState` dataclass: gpio, label?, mode, level, pull, owner, flags(set)
@@ -243,4 +283,3 @@ This is not a full Forth book; it’s a runway into *Codignity’s* dialect and 
 7. Docs: `docs/FORTH_FOR_CODIGNITY.md`
 
 Each phase must ship with at least one new transcript artifact.
-
