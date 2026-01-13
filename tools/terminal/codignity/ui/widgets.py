@@ -20,8 +20,90 @@ from .theme import (
     COLOR_SUCCESS,
     COLOR_KEY_HINT,
     COLOR_MENU_SELECTED,
+    COLOR_CHROME,
     BANNER_LINES,
 )
+
+def draw_chrome_line(
+    win: curses.window,
+    y: int,
+    left: str,
+    right: str = "",
+    *,
+    color_pair: int = COLOR_CHROME,
+    attr: int = 0,
+) -> None:
+    """Draw a full-width "chrome" line with left/right text."""
+    height, width = win.getmaxyx()
+    usable_width = max(0, width - 1)
+    if y < 0 or y >= height or usable_width <= 0:
+        return
+
+    style = curses.color_pair(color_pair) | attr
+    try:
+        win.addstr(y, 0, " " * usable_width, style)
+        if left:
+            win.addstr(y, 0, left[:usable_width], style)
+        if right:
+            right = right[:usable_width]
+            start_x = max(0, usable_width - len(right))
+            if start_x > 0:
+                win.addstr(y, start_x, right, style)
+    except curses.error:
+        pass
+
+
+def draw_frame(
+    win: curses.window,
+    y: int,
+    x: int,
+    height: int,
+    width: int,
+    title: str = "",
+    *,
+    border_pair: int = COLOR_BANNER,
+    title_pair: int = COLOR_CHROME,
+    fill: bool = False,
+) -> tuple[int, int, int, int]:
+    """Draw a bordered frame and return inner rect (y, x, h, w)."""
+    screen_h, screen_w = win.getmaxyx()
+    usable_w = max(0, screen_w - 1)
+    height = max(0, min(height, screen_h - y))
+    width = max(0, min(width, usable_w - x))
+    if height < 2 or width < 2:
+        return y, x, 0, 0
+
+    border_attr = curses.color_pair(border_pair)
+    title_attr = curses.color_pair(title_pair) | curses.A_BOLD
+
+    try:
+        # Border lines
+        win.hline(y, x, curses.ACS_HLINE, width, border_attr)
+        win.hline(y + height - 1, x, curses.ACS_HLINE, width, border_attr)
+        win.vline(y, x, curses.ACS_VLINE, height, border_attr)
+        win.vline(y, x + width - 1, curses.ACS_VLINE, height, border_attr)
+
+        # Corners
+        win.addch(y, x, curses.ACS_ULCORNER, border_attr)
+        win.addch(y, x + width - 1, curses.ACS_URCORNER, border_attr)
+        win.addch(y + height - 1, x, curses.ACS_LLCORNER, border_attr)
+        win.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER, border_attr)
+
+        if fill and height > 2 and width > 2:
+            blank = " " * (width - 2)
+            for row in range(y + 1, y + height - 1):
+                win.addstr(row, x + 1, blank)
+
+        if title:
+            label = f" {title} "
+            label = label[: max(0, width - 2)]
+            title_x = x + 1 + max(0, (width - 2 - len(label)) // 2)
+            win.addstr(y, title_x, label, title_attr)
+
+    except curses.error:
+        pass
+
+    return y + 1, x + 1, height - 2, width - 2
 
 
 def draw_banner(win: curses.window, y: int = 0, x: int = 0) -> int:
@@ -190,47 +272,64 @@ class Menu:
         """Draw the menu centered on the screen."""
         height, width = win.getmaxyx()
 
-        # Calculate menu dimensions
-        menu_width = max(len(self.title) + 4, max(len(f"  {i.key}: {i.label}  ") for i in self.items))
-        menu_height = len(self.items) + 4  # title + border + items + border
+        max_w = max(0, width - 4)
+        max_h = max(0, height - 4)
+        if max_w < 24 or max_h < 10:
+            return
+
+        # Calculate menu dimensions (with padding and room for a hint line).
+        item_width = max(len(f"{i.key.upper():<2} {i.label}") for i in self.items)
+        menu_width = max(len(self.title) + 8, item_width + 8, 36)
+        menu_height = len(self.items) + 6
+
+        menu_width = min(menu_width, max_w)
+        menu_height = min(menu_height, max_h)
 
         # Center the menu
-        start_y = (height - menu_height) // 2
-        start_x = (width - menu_width) // 2
+        start_y = max(0, (height - menu_height) // 2)
+        start_x = max(0, (width - menu_width) // 2)
 
-        # Draw border
+        inner_y, inner_x, inner_h, inner_w = draw_frame(
+            win,
+            start_y,
+            start_x,
+            menu_height,
+            menu_width,
+            self.title,
+            border_pair=COLOR_CHROME,
+            title_pair=COLOR_CHROME,
+            fill=True,
+        )
+        if inner_h <= 0 or inner_w <= 0:
+            return
+
+        content_x = inner_x + 1
+        content_w = max(0, inner_w - 2)
+        content_y = inner_y + 1
+
         try:
-            for y in range(menu_height):
-                for x in range(menu_width):
-                    row = start_y + y
-                    col = start_x + x
-                    if 0 <= row < height and 0 <= col < width:
-                        if y == 0 or y == menu_height - 1:
-                            win.addch(row, col, curses.ACS_HLINE)
-                        elif x == 0 or x == menu_width - 1:
-                            win.addch(row, col, curses.ACS_VLINE)
-
-            # Corners
-            win.addch(start_y, start_x, curses.ACS_ULCORNER)
-            win.addch(start_y, start_x + menu_width - 1, curses.ACS_URCORNER)
-            win.addch(start_y + menu_height - 1, start_x, curses.ACS_LLCORNER)
-            win.addch(start_y + menu_height - 1, start_x + menu_width - 1, curses.ACS_LRCORNER)
-
-            # Title
-            title_x = start_x + (menu_width - len(self.title)) // 2
-            win.addstr(start_y + 1, title_x, self.title, curses.A_BOLD)
-
-            # Items
             for i, item in enumerate(self.items):
-                row = start_y + 3 + i
-                label = f" {item.key}: {item.label} "
-                label = label.ljust(menu_width - 4)
+                row = content_y + i
+                if row >= inner_y + inner_h - 1:
+                    break
 
-                attr = curses.color_pair(COLOR_MENU_SELECTED) if i == self.selected else 0
+                marker = ">" if i == self.selected else " "
+                key = item.key.upper()
+                text = f"{marker} {key:<2} {item.label}"
+                text = text[:content_w].ljust(content_w)
+
                 if not item.enabled:
                     attr = curses.A_DIM
+                elif i == self.selected:
+                    attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
+                else:
+                    attr = 0
 
-                win.addstr(row, start_x + 2, label[:menu_width - 4], attr)
+                win.addstr(row, content_x, text, attr)
+
+            hint = "Esc:Close  Enter:Select  j/k:Move"
+            hint = hint[:content_w].ljust(content_w)
+            win.addstr(inner_y + inner_h - 1, content_x, hint, curses.color_pair(COLOR_KEY_HINT))
 
         except curses.error:
             pass
@@ -246,40 +345,36 @@ def draw_confirm_dialog(
     height, width = win.getmaxyx()
 
     # Calculate dialog dimensions
-    dialog_width = max(len(message) + 4, len(yes_label) + len(no_label) + 10)
-    dialog_height = 5
+    buttons = f"y:{yes_label}  n:{no_label}  Esc:Cancel"
+    dialog_width = max(len(message) + 6, len(buttons) + 6, 36)
+    dialog_height = 7
+    dialog_width = min(dialog_width, max(0, width - 4))
 
-    start_y = (height - dialog_height) // 2
-    start_x = (width - dialog_width) // 2
+    start_y = max(0, (height - dialog_height) // 2)
+    start_x = max(0, (width - dialog_width) // 2)
 
     try:
-        # Draw border
-        for y in range(dialog_height):
-            for x in range(dialog_width):
-                row = start_y + y
-                col = start_x + x
-                if 0 <= row < height and 0 <= col < width:
-                    if y == 0 or y == dialog_height - 1:
-                        win.addch(row, col, curses.ACS_HLINE)
-                    elif x == 0 or x == dialog_width - 1:
-                        win.addch(row, col, curses.ACS_VLINE)
-                    else:
-                        win.addch(row, col, " ")
+        inner_y, inner_x, inner_h, inner_w = draw_frame(
+            win,
+            start_y,
+            start_x,
+            dialog_height,
+            dialog_width,
+            "Confirm",
+            border_pair=COLOR_CHROME,
+            title_pair=COLOR_CHROME,
+            fill=True,
+        )
+        if inner_h <= 0 or inner_w <= 0:
+            return
 
-        # Corners
-        win.addch(start_y, start_x, curses.ACS_ULCORNER)
-        win.addch(start_y, start_x + dialog_width - 1, curses.ACS_URCORNER)
-        win.addch(start_y + dialog_height - 1, start_x, curses.ACS_LLCORNER)
-        win.addch(start_y + dialog_height - 1, start_x + dialog_width - 1, curses.ACS_LRCORNER)
+        msg = message[:inner_w]
+        msg_x = inner_x + max(0, (inner_w - len(msg)) // 2)
+        win.addstr(inner_y + 1, msg_x, msg)
 
-        # Message
-        msg_x = start_x + (dialog_width - len(message)) // 2
-        win.addstr(start_y + 2, msg_x, message)
-
-        # Buttons hint
-        buttons = f"[{yes_label}] / [{no_label}]"
-        btn_x = start_x + (dialog_width - len(buttons)) // 2
-        win.addstr(start_y + 3, btn_x, buttons, curses.color_pair(COLOR_KEY_HINT))
+        btn = buttons[:inner_w]
+        btn_x = inner_x + max(0, (inner_w - len(btn)) // 2)
+        win.addstr(inner_y + inner_h - 2, btn_x, btn, curses.color_pair(COLOR_KEY_HINT))
 
     except curses.error:
         pass
@@ -294,39 +389,35 @@ def draw_input_dialog(
     """Draw an input dialog."""
     height, width = win.getmaxyx()
 
-    dialog_width = max(len(prompt) + 4, 40)
-    dialog_height = 5
+    dialog_width = max(len(prompt) + 6, 44)
+    dialog_height = 7
+    dialog_width = min(dialog_width, max(0, width - 4))
 
-    start_y = (height - dialog_height) // 2
-    start_x = (width - dialog_width) // 2
+    start_y = max(0, (height - dialog_height) // 2)
+    start_x = max(0, (width - dialog_width) // 2)
 
     try:
-        # Draw border
-        for y in range(dialog_height):
-            for x in range(dialog_width):
-                row = start_y + y
-                col = start_x + x
-                if 0 <= row < height and 0 <= col < width:
-                    if y == 0 or y == dialog_height - 1:
-                        win.addch(row, col, curses.ACS_HLINE)
-                    elif x == 0 or x == dialog_width - 1:
-                        win.addch(row, col, curses.ACS_VLINE)
-                    else:
-                        win.addch(row, col, " ")
-
-        # Corners
-        win.addch(start_y, start_x, curses.ACS_ULCORNER)
-        win.addch(start_y, start_x + dialog_width - 1, curses.ACS_URCORNER)
-        win.addch(start_y + dialog_height - 1, start_x, curses.ACS_LLCORNER)
-        win.addch(start_y + dialog_height - 1, start_x + dialog_width - 1, curses.ACS_LRCORNER)
+        inner_y, inner_x, inner_h, inner_w = draw_frame(
+            win,
+            start_y,
+            start_x,
+            dialog_height,
+            dialog_width,
+            "Command",
+            border_pair=COLOR_CHROME,
+            title_pair=COLOR_CHROME,
+            fill=True,
+        )
+        if inner_h <= 0 or inner_w <= 0:
+            return
 
         # Prompt
-        win.addstr(start_y + 1, start_x + 2, prompt)
+        win.addstr(inner_y + 1, inner_x + 1, prompt[: max(0, inner_w - 2)])
 
         # Input field
-        input_y = start_y + 2
-        input_x = start_x + 2
-        input_width = dialog_width - 4
+        input_y = inner_y + 2
+        input_x = inner_x + 1
+        input_width = max(1, inner_w - 2)
 
         # Draw input value
         display_value = value[:input_width]
@@ -547,35 +638,22 @@ def draw_wizard_frame(
     screen_height, screen_width = win.getmaxyx()
 
     # Center the frame
-    start_y = (screen_height - height) // 2
-    start_x = (screen_width - width) // 2
+    start_y = max(0, (screen_height - height) // 2)
+    start_x = max(0, (screen_width - width) // 2)
 
-    try:
-        # Draw border
-        for y in range(height):
-            for x in range(width):
-                row = start_y + y
-                col = start_x + x
-                if 0 <= row < screen_height and 0 <= col < screen_width:
-                    if y == 0 or y == height - 1:
-                        win.addch(row, col, curses.ACS_HLINE)
-                    elif x == 0 or x == width - 1:
-                        win.addch(row, col, curses.ACS_VLINE)
-                    else:
-                        win.addch(row, col, " ")
+    inner_y, inner_x, inner_h, inner_w = draw_frame(
+        win,
+        start_y,
+        start_x,
+        height,
+        width,
+        title,
+        border_pair=COLOR_CHROME,
+        title_pair=COLOR_CHROME,
+        fill=True,
+    )
 
-        # Corners
-        win.addch(start_y, start_x, curses.ACS_ULCORNER)
-        win.addch(start_y, start_x + width - 1, curses.ACS_URCORNER)
-        win.addch(start_y + height - 1, start_x, curses.ACS_LLCORNER)
-        win.addch(start_y + height - 1, start_x + width - 1, curses.ACS_LRCORNER)
-
-        # Title
-        title_x = start_x + (width - len(title) - 4) // 2
-        win.addstr(start_y, title_x, f" {title} ", curses.A_BOLD)
-
-    except curses.error:
-        pass
-
-    # Return inner dimensions
-    return start_y + 1, start_x + 2, height - 2, width - 4
+    # Additional padding for wizard content.
+    padded_x = inner_x + 1
+    padded_w = max(0, inner_w - 2)
+    return inner_y, padded_x, inner_h, padded_w

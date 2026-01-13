@@ -25,6 +25,7 @@ COLOR_SUCCESS = 4
 COLOR_PROMPT = 5
 COLOR_KEY_HINT = 6
 COLOR_MENU_SELECTED = 7
+COLOR_CHROME = 8
 
 
 def init_colors() -> bool:
@@ -37,19 +38,20 @@ def init_colors() -> bool:
 
     # Define color pairs (fg, bg)
     curses.init_pair(COLOR_BANNER, curses.COLOR_CYAN, -1)
-    curses.init_pair(COLOR_STATUS, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(COLOR_STATUS, curses.COLOR_BLACK, curses.COLOR_CYAN)
     curses.init_pair(COLOR_ERROR, curses.COLOR_RED, -1)
     curses.init_pair(COLOR_SUCCESS, curses.COLOR_GREEN, -1)
     curses.init_pair(COLOR_PROMPT, curses.COLOR_YELLOW, -1)
-    curses.init_pair(COLOR_KEY_HINT, curses.COLOR_BLUE, -1)
+    curses.init_pair(COLOR_KEY_HINT, curses.COLOR_WHITE, curses.COLOR_BLUE)
     curses.init_pair(COLOR_MENU_SELECTED, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(COLOR_CHROME, curses.COLOR_BLACK, curses.COLOR_CYAN)
 
     return True
 
 
 # Key hints
 KEY_HINTS = {
-    "home": "q:Quit  Tab:Menu  ?:Help  Enter:Send",
+    "home": "p:Probe  m:Meta  h:Hist  s:Src  v:Val  l:Load  c:Snap  r:Rest  e:Help  Enter:Cmd  Tab:Menu  q:Quit",
     "menu": "j/k or Arrows:Navigate  Enter:Select  Esc:Close",
     "confirm": "y:Yes  n:No  Esc:Cancel",
     "input": "Enter:Submit  Esc:Cancel",

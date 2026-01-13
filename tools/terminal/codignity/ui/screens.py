@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING
 from .theme import init_colors, KEY_HINTS, BANNER_HEIGHT
 from .widgets import (
     draw_banner,
+    draw_chrome_line,
+    draw_frame,
     draw_status_bar,
     draw_key_hints,
     LogPane,
@@ -39,6 +41,7 @@ from .widgets import (
     draw_wizard_frame,
     Checkbox,
     FileBrowser,
+    COLOR_BANNER,
     COLOR_ERROR,
     COLOR_SUCCESS,
 )
@@ -69,14 +72,13 @@ class Action(Enum):
     META = auto()
     HISTORY = auto()
     SOURCE = auto()
-    EXPLAIN = auto()
-    IDENTITY = auto()
+    VALIDATE = auto()
     LOAD = auto()
     SNAPSHOT = auto()
     RESTORE = auto()
     CLEAR = auto()
     SEND = auto()
-    VALIDATE = auto()
+    HELP = auto()
 
 
 @dataclass
@@ -85,11 +87,15 @@ class AppState:
 
     screen: Screen = Screen.HOME
     port: str = ""
-    session: "SerialSession | None" = None
+    connected: bool = False
     mode: str = "unknown"
     node_id: str | None = None
     role: str | None = None
     ver: str | None = None
+    mcu: str | None = None
+    units: str | None = None
+    pins: str | None = None
+    children: int | None = None
     fifo_size: int | None = None
     log: LogPane = field(default_factory=LogPane)
     menu: Menu | None = None
@@ -133,19 +139,18 @@ class AppState:
 
 def create_main_menu(state: AppState) -> Menu:
     """Create the main menu."""
-    connected = state.session is not None
+    connected = state.connected
 
     items = [
-        MenuItem("Probe Device", "p", enabled=True),
-        MenuItem("Identity (?)", "i", enabled=connected),
-        MenuItem("Explain", "e", enabled=connected),
-        MenuItem("Meta Dump", "m", enabled=connected),
+        MenuItem("Probe / Connect", "p", enabled=True),
+        MenuItem("Refresh Meta", "m", enabled=connected),
         MenuItem("History", "h", enabled=connected),
         MenuItem("Source", "s", enabled=connected),
         MenuItem("Validate", "v", enabled=connected),
         MenuItem("Load Firmware", "l", enabled=True),
         MenuItem("Create Snapshot", "c", enabled=connected),
         MenuItem("Restore Snapshot", "r", enabled=True),
+        MenuItem("Help", "e", enabled=True),
         MenuItem("Clear Log", "x", enabled=True),
         MenuItem("Quit", "q", enabled=True),
     ]
@@ -157,8 +162,6 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
     """Map menu selection key to action."""
     key_map = {
         "p": Action.PROBE,
-        "i": Action.IDENTITY,
-        "e": Action.EXPLAIN,
         "m": Action.META,
         "h": Action.HISTORY,
         "s": Action.SOURCE,
@@ -166,6 +169,7 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
         "l": Action.LOAD,
         "c": Action.SNAPSHOT,
         "r": Action.RESTORE,
+        "e": Action.HELP,
         "x": Action.CLEAR,
         "q": Action.QUIT,
     }
@@ -193,7 +197,7 @@ def _do_load(state: AppState, persist: bool) -> None:
 
     try:
         # Open session with short settle to interrupt autoexec
-        with SerialSession.open(port=state.port, settle_s=2.0, quiet=False) as session:
+        with SerialSession.open(port=state.port or None, settle_s=2.0, quiet=False) as session:
             # Send interrupt to stop autoexec
             session.send_line("")
             time.sleep(0.3)
@@ -249,7 +253,7 @@ def _do_snapshot_create(state: AppState, filename: str, safe_save: bool) -> None
     from datetime import datetime, timezone
 
     try:
-        with SerialSession.open(port=state.port, settle_s=5.0) as session:
+        with SerialSession.open(port=state.port or None, settle_s=5.0) as session:
             # Probe for identity
             result = probe(session, timeout_s=3.0)
             node_id = result.node_id or "unknown"
@@ -348,7 +352,7 @@ def _do_restore(state: AppState, snapshot_path: str) -> None:
         total_steps = len(lines) + len(snapshot.meta) + len(snapshot.defs) + 3  # +3 for validate, save, restart
         current_step = 0
 
-        with SerialSession.open(port=state.port, settle_s=2.0, quiet=False) as session:
+        with SerialSession.open(port=state.port or None, settle_s=2.0, quiet=False) as session:
             # Interrupt autoexec
             session.send_line("")
             time.sleep(0.3)
@@ -421,7 +425,7 @@ def _do_restore(state: AppState, snapshot_path: str) -> None:
 
         # Re-probe after restart
         time.sleep(2)
-        with SerialSession.open(port=state.port, settle_s=5.0) as session:
+        with SerialSession.open(port=state.port or None, settle_s=5.0) as session:
             result = probe(session, timeout_s=3.0)
             state.result_queue.put(("restore_done", result.node_id, result.role))
 
@@ -442,7 +446,7 @@ def io_worker(state: AppState) -> None:
     - After load/restore wizards (which use their own sessions)
     """
     from ..session import SerialSession, SerialError
-    from ..protocol import probe, ensure_protocol, parse_meta_dump, is_error
+    from ..protocol import probe, ensure_protocol, is_error
 
     # Persistent session - reused across commands for speed
     persistent_session: SerialSession | None = None
@@ -476,17 +480,20 @@ def io_worker(state: AppState) -> None:
             The SerialSession to use.
         """
         nonlocal persistent_session, session_port, needs_settle
-        target_port = port or state.port
+        target_port: str | None = port or state.port or None
+        if target_port == "":
+            target_port = None
 
-        # Reuse existing session if port matches
-        if persistent_session is not None and session_port == target_port:
-            return persistent_session
+        # Reuse existing session if port matches (or no explicit target port).
+        if persistent_session is not None:
+            if target_port is None or session_port == target_port:
+                return persistent_session
 
         # Port changed or no session - close old and open new
         close_persistent()
         settle_s = 5.0 if needs_settle else 0.0
         persistent_session = SerialSession.open(port=target_port, settle_s=settle_s)
-        session_port = target_port
+        session_port = persistent_session.port
         needs_settle = False  # Settle done
         return persistent_session
 
@@ -511,7 +518,7 @@ def io_worker(state: AppState) -> None:
 
                 elif action == "send":
                     cmd = args[0]
-                    if state.session is None:
+                    if not state.connected:
                         state.result_queue.put(("error", "Not connected"))
                         continue
 
@@ -567,24 +574,6 @@ def io_worker(state: AppState) -> None:
                     else:
                         state.result_queue.put(("validate_ok", response))
 
-                elif action == "explain":
-                    session = get_session()
-                    if not ensure_protocol(session, timeout_s=3.0):
-                        state.result_queue.put(("error", "Could not enter protocol mode"))
-                        continue
-
-                    response = session.send_protocol("explain", timeout_s=3.0)
-                    state.result_queue.put(("explain_ok", response))
-
-                elif action == "identity":
-                    session = get_session()
-                    if not ensure_protocol(session, timeout_s=3.0):
-                        state.result_queue.put(("error", "Could not enter protocol mode"))
-                        continue
-
-                    response = session.send_protocol("?", timeout_s=3.0)
-                    state.result_queue.put(("identity_ok", response))
-
                 elif action == "load":
                     # Load opens its own session - close ours so it doesn't interfere
                     # After load (especially with persist), device may reboot
@@ -638,8 +627,13 @@ def process_results(state: AppState) -> None:
             state.node_id = probe_result.node_id
             state.role = probe_result.role
             state.ver = probe_result.ver
+            state.mcu = probe_result.mcu
             state.fifo_size = probe_result.fifo
-            state.session = True  # Marker that we've connected
+            state.units = probe_result.units
+            state.pins = probe_result.pins
+            state.children = probe_result.children
+            state.connected = True
+            state.last_error = None
 
             state.log.append(f"Connected to {port}", COLOR_SUCCESS)
             state.log.append(f"  Node: {state.node_id or 'unknown'}")
@@ -658,7 +652,42 @@ def process_results(state: AppState) -> None:
             if error:
                 state.log.append(f"Error: {error}", COLOR_ERROR)
 
-        elif result_type in ("meta_ok", "history_ok", "source_ok", "explain_ok", "identity_ok"):
+        elif result_type == "meta_ok":
+            from ..protocol import parse_meta_dump
+
+            response = result[1]
+            meta = parse_meta_dump(response)
+
+            if "id" in meta:
+                state.node_id = meta["id"] or state.node_id
+            if "role" in meta:
+                state.role = meta["role"] or state.role
+            if "ver" in meta:
+                state.ver = meta["ver"] or state.ver
+            if "mcu" in meta:
+                state.mcu = meta["mcu"] or state.mcu
+            if "units" in meta:
+                state.units = meta["units"] or state.units
+            if "pins" in meta:
+                state.pins = meta["pins"] or state.pins
+
+            if "fifo" in meta:
+                try:
+                    state.fifo_size = int(meta["fifo"].strip())
+                except ValueError:
+                    pass
+            if "children" in meta:
+                try:
+                    state.children = int(meta["children"].strip())
+                except ValueError:
+                    pass
+
+            state.log.append(f"Meta refreshed ({len(meta)} keys)", COLOR_SUCCESS)
+            for key in ("mcu", "units", "pins", "children"):
+                if key in meta and meta[key]:
+                    state.log.append(f"  {key}: {meta[key]}")
+
+        elif result_type in ("history_ok", "source_ok"):
             response = result[1]
             state.log.append(response)
 
@@ -733,6 +762,9 @@ def process_results(state: AppState) -> None:
             state.restore_running = False
             state.restore_progress = 1.0
             state.restore_status = "Restore complete!"
+            state.node_id = node_id
+            state.role = role
+            state.connected = True
             state.log.append(f"Restored successfully: {node_id} ({role})", COLOR_SUCCESS)
             state.screen = Screen.HOME
 
@@ -766,13 +798,46 @@ def handle_input(state: AppState, key: int) -> None:
 
 def handle_home_input(state: AppState, key: int) -> None:
     """Handle input on the home screen."""
-    if key == ord("q"):
+    if key == ord("q") or key == ord("Q"):
         state.running = False
     elif key == ord("\t") or key == curses.KEY_F1:
         state.menu = create_main_menu(state)
         state.screen = Screen.MENU
-    elif key == ord("?"):
-        state.log.append("Help: Tab=Menu, q=Quit, PgUp/PgDn=Scroll")
+    elif key in (ord("?"), ord("e"), ord("E")):
+        execute_action(state, Action.HELP)
+    elif key == ord("p") or key == ord("P"):
+        execute_action(state, Action.PROBE)
+    elif key == ord("m") or key == ord("M"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.META)
+    elif key == ord("h") or key == ord("H"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.HISTORY)
+    elif key == ord("s") or key == ord("S"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.SOURCE)
+    elif key == ord("v") or key == ord("V"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.VALIDATE)
+    elif key == ord("l") or key == ord("L"):
+        execute_action(state, Action.LOAD)
+    elif key == ord("c") or key == ord("C"):
+        if not state.connected:
+            state.log.append("Not connected (press p to probe)", COLOR_ERROR)
+        else:
+            execute_action(state, Action.SNAPSHOT)
+    elif key == ord("r") or key == ord("R"):
+        execute_action(state, Action.RESTORE)
+    elif key == ord("x") or key == ord("X"):
+        execute_action(state, Action.CLEAR)
     elif key == curses.KEY_PPAGE:
         state.log.scroll_up(5)
     elif key == curses.KEY_NPAGE:
@@ -828,7 +893,7 @@ def handle_text_input(state: AppState, key: int) -> None:
         curses.curs_set(0)
     elif key == ord("\n") or key == ord("\r"):
         if state.input_action == Action.SEND and state.input_value:
-            state.log.append(f"> {state.input_value}")
+            state.log.append(f"> {state.input_value}", COLOR_BANNER)
             state.io_queue.put(("send", state.input_value))
         state.screen = Screen.HOME
         curses.curs_set(0)
@@ -944,14 +1009,6 @@ def execute_action(state: AppState, action: Action | None) -> None:
         state.log.append("Fetching source...")
         state.io_queue.put(("source",))
 
-    elif action == Action.EXPLAIN:
-        state.log.append("Fetching explanation...")
-        state.io_queue.put(("explain",))
-
-    elif action == Action.IDENTITY:
-        state.log.append("Fetching identity...")
-        state.io_queue.put(("identity",))
-
     elif action == Action.VALIDATE:
         state.log.append("Running validation...")
         state.io_queue.put(("validate",))
@@ -959,6 +1016,12 @@ def execute_action(state: AppState, action: Action | None) -> None:
     elif action == Action.CLEAR:
         state.log.lines.clear()
         state.log.scroll_offset = 0
+    elif action == Action.HELP:
+        state.log.append("— HELP —", COLOR_SUCCESS)
+        state.log.append("p Probe/connect   m Meta   h History   s Source   v Validate")
+        state.log.append("l Load   c Snapshot   r Restore   x Clear   q Quit")
+        state.log.append("Enter: send raw protocol command (try: meta, ?, explain)")
+        state.log.append("PgUp/PgDn: scroll log")
 
     elif action == Action.LOAD:
         # Initialize load wizard state
@@ -1100,14 +1163,119 @@ def draw_screen(win: curses.window, state: AppState) -> None:
     win.erase()
     height, width = win.getmaxyx()
 
-    # Always draw banner and status bar
-    banner_end = draw_banner(win)
+    # If the terminal is tiny, fall back to the simplest layout.
+    if height < (BANNER_HEIGHT + 7) or width < 50:
+        banner_end = draw_banner(win)
+        log_y = banner_end + 1
+        log_height = height - banner_end - 3  # Leave room for status and hints
+        state.log.draw(win, log_y, 0, max(0, log_height), width)
+    else:
+        now = time.strftime("%H:%M:%S")
+        port_label = state.port or "(auto)"
 
-    # Log pane area
-    log_y = banner_end + 1
-    log_height = height - banner_end - 3  # Leave room for status and hints
+        right = f"{now}  {port_label}"
+        draw_chrome_line(win, 0, " CODIGNITY // CONTROL ", right, attr=curses.A_BOLD)
 
-    state.log.draw(win, log_y, 0, log_height, width)
+        banner_lines = draw_banner(win, y=1)
+        info_y = 1 + banner_lines
+
+        node = state.node_id or "—"
+        role = state.role or "—"
+        ver = state.ver or "—"
+        mode = state.mode or "unknown"
+
+        left = f" NODE:{node}  ROLE:{role}  VER:{ver} "
+        right = f" MODE:{mode.upper()} "
+        draw_chrome_line(win, info_y, left, right)
+
+        body_y = info_y + 1
+        body_h = max(0, height - body_y - 2)  # Leave room for status + hints
+
+        if body_h > 2:
+            gap = 1
+            sidebar_min = 26
+            sidebar_w = min(34, max(sidebar_min, width // 4))
+
+            if width < sidebar_min + gap + 30:
+                # Not enough width for a sidebar.
+                log_y, log_x, log_h, log_w = draw_frame(
+                    win, body_y, 0, body_h, width, "LOG / TELEMETRY", fill=False
+                )
+                state.log.draw(win, log_y, log_x, log_h, log_w)
+            else:
+                sys_y, sys_x, sys_h, sys_w = draw_frame(
+                    win, body_y, 0, body_h, sidebar_w, "SYSTEM", fill=False
+                )
+                log_y, log_x, log_h, log_w = draw_frame(
+                    win,
+                    body_y,
+                    sidebar_w + gap,
+                    body_h,
+                    width - (sidebar_w + gap),
+                    "LOG / TELEMETRY",
+                    fill=False,
+                )
+
+                # SYSTEM panel contents
+                connected = state.connected
+                link = "CONNECTED" if connected else "DISCONNECTED"
+
+                lines: list[tuple[str, int | None]] = [
+                    (f"Link: {link}", COLOR_SUCCESS if connected else COLOR_ERROR),
+                    (f"Port: {port_label}", None),
+                    (f"Mode: {mode}", None),
+                    (f"Node: {node}", None),
+                    (f"Role: {role}", None),
+                    (f"Ver:  {ver}", None),
+                ]
+                if state.mcu:
+                    lines.append((f"MCU:  {state.mcu}", None))
+                if state.units:
+                    lines.append((f"Units:{state.units}", None))
+                if state.pins:
+                    lines.append((f"Pins: {state.pins}", None))
+                if state.children is not None:
+                    lines.append((f"Kids: {state.children}", None))
+                if state.fifo_size is not None:
+                    lines.append((f"FIFO: {state.fifo_size}", None))
+                if state.last_error:
+                    lines.append(("", None))
+                    lines.append(("Last error:", COLOR_ERROR))
+                    lines.append((state.last_error, COLOR_ERROR))
+
+                lines.append(("", None))
+                lines.append(("ACTIONS", None))
+                lines.extend(
+                    [
+                        ("p  Probe/connect", None),
+                        ("m  Meta refresh", None),
+                        ("h  History", None),
+                        ("l  Load firmware", None),
+                        ("c  Snapshot", None),
+                        ("r  Restore", None),
+                        ("Enter  Command", None),
+                        ("Tab  Menu", None),
+                        ("q  Quit", None),
+                        ("PgUp/PgDn  Scroll", None),
+                    ]
+                )
+
+                try:
+                    row = sys_y
+                    for text, color in lines:
+                        if row >= sys_y + sys_h:
+                            break
+                        clipped = text[:sys_w].ljust(sys_w)
+                        if color is None:
+                            win.addstr(row, sys_x, clipped)
+                        else:
+                            win.addstr(row, sys_x, clipped, curses.color_pair(color))
+                        row += 1
+                except curses.error:
+                    pass
+
+                # LOG panel contents
+                state.log.draw(win, log_y, log_x, log_h, log_w)
 
     # Status bar
     draw_status_bar(
