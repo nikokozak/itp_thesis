@@ -25,7 +25,7 @@ breaking it with `define`.
 
 **Goal:** The node explains itself from its own stored state, not from hardcoded strings.
 
-Implementation plan: `MILESTONE_B_PLAN.md`
+Implementation plan: (completed; see `firmware/esp32/codignity.fs` and transcripts)
 
 1. **Metadata model**
    - Minimal, explicit fields (e.g., `node-id`, `role`, `pins`, `sample-units`, `children`).
@@ -48,6 +48,13 @@ Implementation plan: `MILESTONE_B_PLAN.md`
 3. Minimal packaging instructions for running on a Raspberry Pi (no cloud, no GUI required).
 
 **Acceptance:** Connect → automatic snapshot; modify via `define` → diff shown; restore from snapshot works.
+
+## Milestone E — Hardware Affordances (Pins + Introspection)
+
+**Goal:** Make the system useful without writing Forth by providing pin maps, pin state/ownership, and safe helpers,
+surfaced in the CLI/TUI.
+
+Implementation plan: `MILESTONE_E_AFFORDANCES_PLAN.md`
 
 ## Milestone D — Multi-Node Routing + Dumb Node
 

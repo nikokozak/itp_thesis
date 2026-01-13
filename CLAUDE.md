@@ -5,14 +5,14 @@ This repo contains the Codignity firmware and tooling for ESP32-based sensor nod
 ## Current Work
 
 Active branch: `feat/milestone-c-cli`
-Implementation spec: `MILESTONE_C_CLI_PLAN.md`
+Implementation spec: `MILESTONE_E_AFFORDANCES_PLAN.md`
 Protocol reference: `PROTOCOL_REFERENCE.md`
 
 ## Directory Structure
 
 - `firmware/esp32/` — Forth source for Codignity (`codignity.fs`)
 - `tools/terminal/` — Python CLI/TUI tooling (Milestone C target)
-- `docs/` — Design documents and transcripts
+- `tools/terminal/transcripts/` — Session transcripts (regression artifacts)
 
 ## Development
 
