@@ -49,6 +49,13 @@ from codignity.defs_log import (
     load_defs_from_file,
     merge_defs,
 )
+from codignity.pins import (
+    PinState,
+    parse_pins_response,
+    parse_pin_kv,
+    parse_pin_value_response,
+)
+from codignity.boards import get_manifest, list_boards, BoardManifest
 
 if TYPE_CHECKING:
     from codignity.transcript import Transcript as TranscriptType
@@ -919,6 +926,409 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
         return 1
 
 
+def render_pin_footprint(
+    board: BoardManifest,
+    pins: dict[int, PinState],
+    selected_gpio: int | None = None,
+) -> str:
+    """Render a board footprint view with pin states.
+
+    Args:
+        board: The board manifest with physical layout.
+        pins: GPIO -> PinState mapping from device.
+        selected_gpio: Optional GPIO to highlight.
+
+    Returns:
+        ASCII rendering of the board footprint.
+    """
+    left = board.left_column()
+    right = board.right_column()
+    rows = max(len(left), len(right))
+
+    lines = []
+    lines.append(f"  {board.display_name}")
+    lines.append("  " + "=" * 50)
+    lines.append("")
+
+    # Header
+    lines.append("  Left                                        Right")
+    lines.append("  " + "-" * 22 + "    " + "-" * 22)
+
+    for i in range(rows):
+        left_pin = left[i] if i < len(left) else None
+        right_pin = right[i] if i < len(right) else None
+
+        left_str = _format_pin_cell(left_pin, pins, selected_gpio)
+        right_str = _format_pin_cell(right_pin, pins, selected_gpio)
+
+        lines.append(f"  {left_str}    {right_str}")
+
+    lines.append("")
+    lines.append("  Legend: [L]=level [M]=mode [O]=owner [!]=warning")
+    return "\n".join(lines)
+
+
+def _format_pin_cell(
+    pin_def: "PinDef | None",
+    pins: dict[int, PinState],
+    selected_gpio: int | None,
+) -> str:
+    """Format a single pin cell for footprint display."""
+    from codignity.boards import PinDef
+
+    if pin_def is None:
+        return " " * 22
+
+    # Base label
+    label = pin_def.label.ljust(4)
+
+    # For non-GPIO pins (power, ground, control)
+    if pin_def.gpio is None:
+        kind_marker = {"power": "+", "gnd": "-", "control": "~"}.get(pin_def.kind, " ")
+        return f"{label} {kind_marker}                  "
+
+    gpio = pin_def.gpio
+    state = pins.get(gpio)
+
+    # Highlight marker
+    marker = ">" if gpio == selected_gpio else " "
+
+    if state is None:
+        return f"{marker}{label} (gpio{gpio:02d})  ?        "
+
+    # Level
+    if state.level is not None:
+        level_str = str(state.level)
+    else:
+        level_str = "-"
+
+    # Mode (abbreviated)
+    mode_abbr = {
+        "unknown": "?",
+        "in": "I",
+        "out": "O",
+        "adc": "A",
+        "i2c": "2",
+        "uart": "U",
+        "pwm": "P",
+        "reserved": "R",
+    }.get(state.mode, "?")
+
+    # Owner (truncated)
+    owner = state.owner[:6] if state.owner else "-"
+
+    # Warning flags
+    warn = ""
+    if state.is_strapping():
+        warn = "!"
+    elif state.is_flash():
+        warn = "X"
+
+    return f"{marker}{label} G{gpio:02d} L{level_str} M{mode_abbr} O{owner.ljust(6)}{warn}"
+
+
+def cmd_pins(args: argparse.Namespace) -> int:
+    """Handle the `pins` subcommand - show pin footprint view."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print(
+                        "Error: Could not enter protocol mode.\n"
+                        "Is Codignity loaded? Try `probe` first.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                # Get pins dump
+                transcript.record_sent("pins")
+                response = session.send_protocol("pins", timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                board_id, pins = parse_pins_response(response)
+
+                if args.json:
+                    output = {
+                        "board": board_id,
+                        "pins": {
+                            gpio: {
+                                "gpio": state.gpio,
+                                "mode": state.mode,
+                                "level": state.level,
+                                "pull": state.pull,
+                                "owner": state.owner,
+                                "flags": list(state.flags),
+                            }
+                            for gpio, state in pins.items()
+                        },
+                    }
+                    print(json.dumps(output, indent=2))
+                    return 0
+
+                # Try to get board manifest
+                board = None
+                if board_id:
+                    board = get_manifest(board_id)
+                    if board is None:
+                        print(f"Warning: Unknown board '{board_id}'", file=sys.stderr)
+
+                if board:
+                    # Render footprint view
+                    print(render_pin_footprint(board, pins))
+                else:
+                    # Fallback: simple list
+                    print("Pin states (no board manifest):")
+                    print("-" * 60)
+                    for gpio in sorted(pins.keys()):
+                        state = pins[gpio]
+                        level = state.level if state.level is not None else "-"
+                        owner = state.owner or "-"
+                        flags = ",".join(state.flags) if state.flags else "-"
+                        print(
+                            f"  GPIO{gpio:02d}: mode={state.mode:8s} "
+                            f"level={level} pull={state.pull:4s} "
+                            f"owner={owner:8s} flags={flags}"
+                        )
+
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_status(args: argparse.Namespace) -> int:
+    """Handle the `pin status` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print(
+                        "Error: Could not enter protocol mode.\n"
+                        "Is Codignity loaded? Try `probe` first.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                cmd = f"pin-status {args.pin}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                # Parse the pin state
+                for line in response.splitlines():
+                    state = parse_pin_kv(line)
+                    if state:
+                        if args.json:
+                            output = {
+                                "gpio": state.gpio,
+                                "mode": state.mode,
+                                "level": state.level,
+                                "pull": state.pull,
+                                "owner": state.owner,
+                                "flags": list(state.flags),
+                            }
+                            print(json.dumps(output, indent=2))
+                        else:
+                            level = state.level if state.level is not None else "-"
+                            owner = state.owner or "-"
+                            flags = ",".join(state.flags) if state.flags else "-"
+                            print(f"GPIO{state.gpio}:")
+                            print(f"  Mode:  {state.mode}")
+                            print(f"  Level: {level}")
+                            print(f"  Pull:  {state.pull}")
+                            print(f"  Owner: {owner}")
+                            print(f"  Flags: {flags}")
+                        return 0
+
+                print("Error: No pin state in response", file=sys.stderr)
+                return 1
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_claim(args: argparse.Namespace) -> int:
+    """Handle the `pin claim` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-claim {args.pin} {args.owner}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    if error_msg == "pin_owned":
+                        print("Hint: Pin is already owned by another owner.", file=sys.stderr)
+                    return 1
+
+                print(f"Claimed {args.pin} for '{args.owner}'")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_release(args: argparse.Namespace) -> int:
+    """Handle the `pin release` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-release {args.pin}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                print(f"Released {args.pin}")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_read(args: argparse.Namespace) -> int:
+    """Handle the `pin read` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-read {args.pin}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                value = parse_pin_value_response(response)
+                if value is not None:
+                    print(value)
+                else:
+                    print("Error: Could not parse value from response", file=sys.stderr)
+                    return 1
+
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_write(args: argparse.Namespace) -> int:
+    """Handle the `pin write` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-write {args.pin} {args.value}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                print(f"Wrote {args.value} to {args.pin}")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_mode(args: argparse.Namespace) -> int:
+    """Handle the `pin mode` subcommand."""
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-mode {args.pin} {args.mode}"
+                if args.pull:
+                    cmd += f" pull={args.pull}"
+
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                pull_str = f" with pull={args.pull}" if args.pull else ""
+                print(f"Set {args.pin} to {args.mode}{pull_str}")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 # ---- Main ----
 
 
@@ -1058,6 +1468,61 @@ def main(argv: list[str] | None = None) -> int:
         help="Snapshot file to compare against",
     )
     p_snap_diff.set_defaults(func=cmd_snapshot_diff)
+
+    # pins (show footprint view)
+    p_pins = subparsers.add_parser("pins", help="Show pin states in board footprint view")
+    add_common_args(p_pins)
+    p_pins.add_argument("--json", action="store_true", help="Output as JSON")
+    p_pins.set_defaults(func=cmd_pins)
+
+    # pin (with subcommands: status, claim, release, read, write, mode)
+    p_pin = subparsers.add_parser("pin", help="Single pin operations")
+    pin_sub = p_pin.add_subparsers(dest="pin_cmd", required=True)
+
+    # pin status
+    p_pin_status = pin_sub.add_parser("status", help="Get single pin status")
+    add_common_args(p_pin_status)
+    p_pin_status.add_argument("pin", help="Pin identifier (e.g., D4, GPIO4, 4)")
+    p_pin_status.add_argument("--json", action="store_true", help="Output as JSON")
+    p_pin_status.set_defaults(func=cmd_pin_status)
+
+    # pin claim
+    p_pin_claim = pin_sub.add_parser("claim", help="Claim a pin for an owner")
+    add_common_args(p_pin_claim)
+    p_pin_claim.add_argument("pin", help="Pin identifier")
+    p_pin_claim.add_argument("owner", help="Owner label (e.g., button, led, sensor)")
+    p_pin_claim.set_defaults(func=cmd_pin_claim)
+
+    # pin release
+    p_pin_release = pin_sub.add_parser("release", help="Release pin ownership")
+    add_common_args(p_pin_release)
+    p_pin_release.add_argument("pin", help="Pin identifier")
+    p_pin_release.set_defaults(func=cmd_pin_release)
+
+    # pin read
+    p_pin_read = pin_sub.add_parser("read", help="Read pin level")
+    add_common_args(p_pin_read)
+    p_pin_read.add_argument("pin", help="Pin identifier")
+    p_pin_read.set_defaults(func=cmd_pin_read)
+
+    # pin write
+    p_pin_write = pin_sub.add_parser("write", help="Write pin level")
+    add_common_args(p_pin_write)
+    p_pin_write.add_argument("pin", help="Pin identifier")
+    p_pin_write.add_argument("value", choices=["0", "1"], help="Value to write (0 or 1)")
+    p_pin_write.set_defaults(func=cmd_pin_write)
+
+    # pin mode
+    p_pin_mode = pin_sub.add_parser("mode", help="Set pin mode")
+    add_common_args(p_pin_mode)
+    p_pin_mode.add_argument("pin", help="Pin identifier")
+    p_pin_mode.add_argument("mode", choices=["in", "out"], help="Mode (in or out)")
+    p_pin_mode.add_argument(
+        "--pull",
+        choices=["up", "down", "none"],
+        help="Pull resistor configuration",
+    )
+    p_pin_mode.set_defaults(func=cmd_pin_mode)
 
     args = parser.parse_args(argv)
     return args.func(args)

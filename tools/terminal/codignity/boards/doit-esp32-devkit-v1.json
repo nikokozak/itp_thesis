@@ -1,0 +1,37 @@
+{
+  "board_id": "doit-esp32-devkit-v1",
+  "display_name": "DOIT ESP32 DEVKIT V1 (30-pin)",
+  "pins": [
+    {"pos": "L1", "label": "3V3", "gpio": null, "kind": "power"},
+    {"pos": "L2", "label": "GND", "gpio": null, "kind": "gnd"},
+    {"pos": "L3", "label": "D15", "gpio": 15, "kind": "signal", "notes": "strapping"},
+    {"pos": "L4", "label": "D2", "gpio": 2, "kind": "signal", "notes": "strapping, onboard LED"},
+    {"pos": "L5", "label": "D4", "gpio": 4, "kind": "signal", "notes": "SAFE pin"},
+    {"pos": "L6", "label": "RX2", "gpio": 16, "kind": "signal"},
+    {"pos": "L7", "label": "TX2", "gpio": 17, "kind": "signal"},
+    {"pos": "L8", "label": "D5", "gpio": 5, "kind": "signal", "notes": "strapping"},
+    {"pos": "L9", "label": "D18", "gpio": 18, "kind": "signal"},
+    {"pos": "L10", "label": "D19", "gpio": 19, "kind": "signal"},
+    {"pos": "L11", "label": "D21", "gpio": 21, "kind": "signal"},
+    {"pos": "L12", "label": "RX0", "gpio": 3, "kind": "signal", "notes": "serial console"},
+    {"pos": "L13", "label": "TX0", "gpio": 1, "kind": "signal", "notes": "serial console"},
+    {"pos": "L14", "label": "D22", "gpio": 22, "kind": "signal"},
+    {"pos": "L15", "label": "D23", "gpio": 23, "kind": "signal"},
+
+    {"pos": "R1", "label": "VIN", "gpio": null, "kind": "power"},
+    {"pos": "R2", "label": "GND", "gpio": null, "kind": "gnd"},
+    {"pos": "R3", "label": "D13", "gpio": 13, "kind": "signal"},
+    {"pos": "R4", "label": "D12", "gpio": 12, "kind": "signal", "notes": "strapping"},
+    {"pos": "R5", "label": "D14", "gpio": 14, "kind": "signal"},
+    {"pos": "R6", "label": "D27", "gpio": 27, "kind": "signal"},
+    {"pos": "R7", "label": "D26", "gpio": 26, "kind": "signal"},
+    {"pos": "R8", "label": "D25", "gpio": 25, "kind": "signal"},
+    {"pos": "R9", "label": "D33", "gpio": 33, "kind": "signal"},
+    {"pos": "R10", "label": "D32", "gpio": 32, "kind": "signal"},
+    {"pos": "R11", "label": "D35", "gpio": 35, "kind": "signal", "notes": "input-only"},
+    {"pos": "R12", "label": "D34", "gpio": 34, "kind": "signal", "notes": "input-only"},
+    {"pos": "R13", "label": "VN", "gpio": 39, "kind": "signal", "notes": "input-only, ADC"},
+    {"pos": "R14", "label": "VP", "gpio": 36, "kind": "signal", "notes": "input-only, ADC"},
+    {"pos": "R15", "label": "EN", "gpio": null, "kind": "control", "notes": "reset enable"}
+  ]
+}

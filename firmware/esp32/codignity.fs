@@ -409,6 +409,9 @@ variable cd-meta-tvn
     s" 0"
   then ;
 
+: cd-board$ ( -- a n f )
+  s" board" cd-meta-get$ ;
+
 : cd.!meta-if { ka kn la ln -- }
   ka kn cd-meta-get$ dup if
     drop
@@ -462,6 +465,315 @@ variable cd-meta-tvn
   cd.!ok
   cd.!end ;
 
+\ ------------------------------------------------------------
+\ Pin Registry (Milestone E: Hardware Affordances)
+\ Tracks Codignity-level ownership and state for GPIO 0-39.
+\ Physical layout lives in terminal tooling (board manifests).
+
+40 constant cd-pin-max
+
+\ Mode enum: 0=unknown, 1=in, 2=out, 3=adc, 4=i2c, 5=uart, 6=pwm, 7=reserved
+create cd-pin-mode cd-pin-max allot
+\ Pull enum: 0=none, 1=up, 2=down
+create cd-pin-pull cd-pin-max allot
+\ Flags bitmask: 1=safe, 2=strapping, 4=input-only, 8=flash
+create cd-pin-flags cd-pin-max allot
+\ Owner: 8 bytes per pin (length byte + 7 chars)
+8 constant cd-pin-owner-max
+create cd-pin-owner cd-pin-max cd-pin-owner-max * allot
+
+: cd-pin-mode@ ( gpio -- mode ) cd-pin-mode + c@ ;
+: cd-pin-mode! ( mode gpio -- ) cd-pin-mode + c! ;
+: cd-pin-pull@ ( gpio -- pull ) cd-pin-pull + c@ ;
+: cd-pin-pull! ( pull gpio -- ) cd-pin-pull + c! ;
+: cd-pin-flags@ ( gpio -- flags ) cd-pin-flags + c@ ;
+: cd-pin-flags! ( flags gpio -- ) cd-pin-flags + c! ;
+: cd-pin-owner-addr ( gpio -- a ) cd-pin-owner-max * cd-pin-owner + ;
+: cd-pin-owner@ ( gpio -- a n ) cd-pin-owner-addr dup c@ swap 1+ swap ;
+: cd-pin-owner! ( a n gpio -- )
+  cd-pin-owner-addr >r
+  cd-pin-owner-max 1- cd-min dup r@ c!
+  r@ 1+ swap cmove
+  r> drop ;
+: cd-pin-owner-clear ( gpio -- ) 0 swap cd-pin-owner-addr c! ;
+
+\ Initialize registry to defaults
+: cd-pin-registry-init ( -- )
+  cd-pin-max 0 do
+    0 i cd-pin-mode!
+    0 i cd-pin-pull!
+    0 i cd-pin-flags!
+    i cd-pin-owner-clear
+  loop
+  \ Mark known ESP32 constraints
+  \ Flash pins (6-11): flag=8
+  6 11 do 8 i cd-pin-flags! loop
+  \ Input-only pins (34-39): flag=4
+  34 40 do 4 i cd-pin-flags! loop
+  \ Strapping pins (0,2,5,12,15): flag=2
+  2 0 cd-pin-flags!
+  2 2 cd-pin-flags!
+  2 5 cd-pin-flags!
+  2 12 cd-pin-flags!
+  2 15 cd-pin-flags!
+  \ SAFE pin (GPIO4): flag=1 (safe)
+  1 cd-safe-gpio cd-pin-flags! ;
+
+\ Pin token parsing: accept "4", "D4", "GPIO4" (case-insensitive)
+variable cd-parse-gpio-num
+variable cd-parse-gpio-ok
+
+: cd-digit? ( c -- f ) dup [char] 0 >= swap [char] 9 <= and ;
+: cd-to-upper ( c -- c' ) dup [char] a >= over [char] z <= and if 32 - then ;
+
+: cd-parse-digits ( a n -- gpio f )
+  0 cd-parse-gpio-num !
+  dup 0= if 2drop 0 0 exit then
+  begin dup while
+    over c@ cd-digit? 0= if 2drop 0 0 exit then
+    over c@ [char] 0 - cd-parse-gpio-num @ 10 * + cd-parse-gpio-num !
+    cd-adv
+  repeat
+  2drop
+  cd-parse-gpio-num @ dup cd-pin-max < if -1 else drop 0 0 then ;
+
+: cd-parse-gpio ( a n -- gpio f )
+  dup 0= if 2drop 0 0 exit then
+  over c@ cd-to-upper
+  dup [char] D = if
+    drop cd-adv cd-parse-digits exit
+  then
+  dup [char] G = if
+    drop
+    dup 4 >= if
+      over 1+ c@ cd-to-upper [char] P = if
+      over 2 + c@ cd-to-upper [char] I = if
+      over 3 + c@ cd-to-upper [char] O = if
+        4 /string cd-parse-digits exit
+      then then then
+    then
+    2drop 0 0 exit
+  then
+  cd-digit? if cd-parse-digits exit then
+  2drop 0 0 ;
+
+\ Mode token to enum
+: cd-mode-token ( a n -- enum f )
+  2dup s" unknown" str= if 2drop 0 -1 exit then
+  2dup s" in" str= if 2drop 1 -1 exit then
+  2dup s" out" str= if 2drop 2 -1 exit then
+  2dup s" adc" str= if 2drop 3 -1 exit then
+  2dup s" i2c" str= if 2drop 4 -1 exit then
+  2dup s" uart" str= if 2drop 5 -1 exit then
+  2dup s" pwm" str= if 2drop 6 -1 exit then
+  2dup s" reserved" str= if 2drop 7 -1 exit then
+  2drop 0 0 ;
+
+\ Enum to mode token
+: cd-mode$ ( enum -- a n )
+  case
+    0 of s" unknown" endof
+    1 of s" in" endof
+    2 of s" out" endof
+    3 of s" adc" endof
+    4 of s" i2c" endof
+    5 of s" uart" endof
+    6 of s" pwm" endof
+    7 of s" reserved" endof
+    s" unknown" rot
+  endcase ;
+
+\ Pull token to enum
+: cd-pull-token ( a n -- enum f )
+  2dup s" none" str= if 2drop 0 -1 exit then
+  2dup s" up" str= if 2drop 1 -1 exit then
+  2dup s" down" str= if 2drop 2 -1 exit then
+  2drop 0 0 ;
+
+\ Enum to pull token
+: cd-pull$ ( enum -- a n )
+  case
+    0 of s" none" endof
+    1 of s" up" endof
+    2 of s" down" endof
+    s" none" rot
+  endcase ;
+
+\ Flags to comma-separated token
+create cd-flags-buf 32 allot
+variable cd-flags-len
+
+: cd-flags-add ( a n -- )
+  cd-flags-len @ 0> if
+    [char] , cd-flags-buf cd-flags-len @ + c!
+    1 cd-flags-len +!
+  then
+  dup cd-flags-len @ + 32 > if 2drop exit then
+  cd-flags-buf cd-flags-len @ + swap dup cd-flags-len +! cmove ;
+
+: cd-flags$ ( flags -- a n )
+  0 cd-flags-len !
+  dup 1 and if s" safe" cd-flags-add then
+  dup 2 and if s" strapping" cd-flags-add then
+  dup 4 and if s" input-only" cd-flags-add then
+  dup 8 and if s" flash" cd-flags-add then
+  drop
+  cd-flags-len @ 0= if s" -" else cd-flags-buf cd-flags-len @ then ;
+
+\ Check if pin is safe to read (not flash pin)
+: cd-pin-readable? ( gpio -- f ) cd-pin-flags@ 8 and 0= ;
+
+\ Emit single pin status line
+: cd.!pin ( gpio -- )
+  ." ! pin gpio=" dup . space
+  ." mode=" dup cd-pin-mode@ cd-mode$ type space
+  ." level="
+  dup cd-pin-readable? if
+    dup digitalRead .
+  else
+    ." - "
+  then
+  ." pull=" dup cd-pin-pull@ cd-pull$ type space
+  ." owner="
+  dup cd-pin-owner@ dup 0= if 2drop ." -" else type then
+  space
+  ." flags=" cd-pin-flags@ cd-flags$ type
+  cr ;
+
+\ Protocol command: pins (bulk dump)
+: pins ( -- )
+  cd-board$ if ." ! board " type cr else 2drop then
+  cd-pin-max 0 do i cd.!pin loop
+  cd.!end ;
+
+\ Protocol command: pin-status <pin>
+: pin-status ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  cd.!pin
+  cd.!end ;
+
+\ Protocol command: pin-claim <pin> <owner>
+: pin-claim ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  { gpio }
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  { oa on }
+  gpio cd-pin-owner@ dup 0> if
+    oa on str= 0= if
+      s" pin_owned" cd.#err cd.!end exit
+    then
+  else
+    2drop
+  then
+  oa on gpio cd-pin-owner!
+  cd.!ok cd.!end ;
+
+\ Protocol command: pin-release <pin>
+: pin-release ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  cd-pin-owner-clear
+  cd.!ok cd.!end ;
+
+\ Protocol command: pin-mode <pin> in|out [pull=up|down|none]
+: pin-mode ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  { gpio }
+  \ Check if flash pin
+  gpio cd-pin-flags@ 8 and if s" pin_flash" cd.#err cd.!end exit then
+  \ Parse mode
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  2dup s" in" str= if
+    2drop
+    gpio INPUT pinMode
+    1 gpio cd-pin-mode!
+  else
+    2dup s" out" str= if
+      2drop
+      \ Check if input-only pin
+      gpio cd-pin-flags@ 4 and if s" pin_input_only" cd.#err cd.!end exit then
+      gpio OUTPUT pinMode
+      2 gpio cd-pin-mode!
+    else
+      2drop s" pin_mode_invalid" cd.#err cd.!end exit
+    then
+  then
+  \ Parse optional pull=xxx
+  bl parse cd-skip-spaces
+  dup 0> if
+    \ Expect "pull=xxx"
+    2dup 5 min s" pull=" str= if
+      5 /string
+      2dup s" up" str= if
+        2drop gpio gpio_pullup_en drop 1 gpio cd-pin-pull!
+      else
+        2dup s" down" str= if
+          2drop gpio gpio_pulldown_en drop 2 gpio cd-pin-pull!
+        else
+          2dup s" none" str= if
+            2drop
+            gpio gpio_pullup_dis drop
+            gpio gpio_pulldown_dis drop
+            0 gpio cd-pin-pull!
+          else
+            2drop s" pin_pull_invalid" cd.#err cd.!end exit
+          then
+        then
+      then
+    else
+      2drop s" pin_syntax" cd.#err cd.!end exit
+    then
+  else
+    2drop
+  then
+  cd.!ok cd.!end ;
+
+\ Protocol command: pin-read <pin>
+: pin-read ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  dup cd-pin-readable? 0= if drop s" pin_flash" cd.#err cd.!end exit then
+  ." ! value " digitalRead . cr
+  cd.!end ;
+
+\ Protocol command: pin-write <pin> 0|1
+: pin-write ( -- )
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  cd-parse-gpio 0= if s" pin_range" cd.#err cd.!end exit then
+  { gpio }
+  \ Check constraints
+  gpio cd-pin-flags@ 8 and if s" pin_flash" cd.#err cd.!end exit then
+  gpio cd-pin-flags@ 4 and if s" pin_input_only" cd.#err cd.!end exit then
+  \ Parse value
+  bl parse cd-skip-spaces
+  dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
+  2dup s" 0" str= if
+    2drop 0 gpio digitalWrite
+  else
+    2dup s" 1" str= if
+      2drop 1 gpio digitalWrite
+    else
+      2drop s" pin_value_invalid" cd.#err cd.!end exit
+    then
+  then
+  \ Auto-set mode to out if unknown
+  gpio cd-pin-mode@ 0= if
+    gpio OUTPUT pinMode
+    2 gpio cd-pin-mode!
+  then
+  cd.!ok cd.!end ;
+
 \ Protocol commands (match PROTOCOL_REFERENCE.md)
 
 : ? ( -- )
@@ -469,6 +781,7 @@ variable cd-meta-tvn
   ." ! role " cd-role$ type cr
   ." ! mcu esp32" cr
   ." ! ver " cd-ver$ type cr
+  cd-board$ if ." ! board " type cr else 2drop then
   ." ! fifo " cd-fifo-size . cr
   s" units" 2dup cd.!meta-if
   s" pins" 2dup cd.!meta-if
@@ -498,12 +811,14 @@ variable cd-meta-tvn
   ." ! role " cd-role$ type cr
   ." ! mcu esp32" cr
   ." ! ver " cd-ver$ type cr
+  cd-board$ if ." ! board " type cr else 2drop then
   s" units" 2dup cd.!meta-if
   s" pins" 2dup cd.!meta-if
   ." ! children " cd-children$ type cr
   ." ! fifo " cd-fifo-size . cr
   ." ! core ? s n d c" cr
   ." ! extended explain source history define meta save validate safe-save restart recover rollback repl" cr
+  ." ! pins pins pin-status pin-claim pin-release pin-mode pin-read pin-write" cr
   cd.!end ;
 
 : cd-validate? ( -- f )
@@ -738,6 +1053,7 @@ create cd-ch 1 allot
 cd-clear
 cd-nl-init
 cd-meta-load
+cd-pin-registry-init
 cd-myforth-build
 cd-lkg-build
 sp0 sp!
