@@ -1,5 +1,10 @@
 """Screen management and state machine for Codignity TUI.
 
+IO worker maintains a persistent SerialSession that is reused across commands.
+- First probe: 5s settle (allow autoexec to complete)
+- Subsequent commands: instant (no settle)
+- Settle required again after: port change, serial error, load --persist, restore
+
 TODO(thesis): TUI wizards are functional but need polish:
 - Load wizard: Add cancel-during-load support, better error display
 - Snapshot wizard: Add filename editing, show defs count before create
@@ -427,32 +432,90 @@ def _do_restore(state: AppState, snapshot_path: str) -> None:
 
 
 def io_worker(state: AppState) -> None:
-    """Background worker for serial I/O."""
+    """Background worker for serial I/O.
+
+    Maintains a persistent SerialSession that is reused across commands for low latency.
+    The session is only reopened on:
+    - First probe (with 5s settle to allow autoexec to complete)
+    - Port change
+    - Fatal serial error
+    - After load/restore wizards (which use their own sessions)
+    """
     from ..session import SerialSession, SerialError
     from ..protocol import probe, ensure_protocol, parse_meta_dump, is_error
 
-    while state.running:
-        try:
-            task = state.io_queue.get(timeout=0.1)
-        except queue.Empty:
-            continue
+    # Persistent session - reused across commands for speed
+    persistent_session: SerialSession | None = None
+    session_port: str | None = None  # Track which port the session is for
+    needs_settle: bool = True  # True when next open needs settle (device may have rebooted)
 
-        action, *args = task
+    def close_persistent(device_rebooting: bool = False) -> None:
+        """Close the persistent session if open.
 
-        try:
-            if action == "probe":
-                port = args[0] if args else state.port
-                with SerialSession.open(port=port, settle_s=5.0) as session:
+        Args:
+            device_rebooting: If True, next open will need settle time for autoexec.
+        """
+        nonlocal persistent_session, session_port, needs_settle
+        if persistent_session is not None:
+            try:
+                persistent_session.close()
+            except Exception:
+                pass
+            persistent_session = None
+            session_port = None
+        if device_rebooting:
+            needs_settle = True
+
+    def get_session(port: str | None = None) -> SerialSession:
+        """Get the persistent session, opening if needed.
+
+        Args:
+            port: Target port (uses state.port if None).
+
+        Returns:
+            The SerialSession to use.
+        """
+        nonlocal persistent_session, session_port, needs_settle
+        target_port = port or state.port
+
+        # Reuse existing session if port matches
+        if persistent_session is not None and session_port == target_port:
+            return persistent_session
+
+        # Port changed or no session - close old and open new
+        close_persistent()
+        settle_s = 5.0 if needs_settle else 0.0
+        persistent_session = SerialSession.open(port=target_port, settle_s=settle_s)
+        session_port = target_port
+        needs_settle = False  # Settle done
+        return persistent_session
+
+    try:
+        while state.running:
+            try:
+                task = state.io_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            action, *args = task
+
+            try:
+                if action == "probe":
+                    port = args[0] if args else state.port
+                    # Port change requires settle (close existing session)
+                    if port and session_port and port != session_port:
+                        close_persistent()
+                    session = get_session(port)
                     result = probe(session, timeout_s=3.0)
                     state.result_queue.put(("probe_ok", result, session.port))
 
-            elif action == "send":
-                cmd = args[0]
-                if state.session is None:
-                    state.result_queue.put(("error", "Not connected"))
-                    continue
+                elif action == "send":
+                    cmd = args[0]
+                    if state.session is None:
+                        state.result_queue.put(("error", "Not connected"))
+                        continue
 
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -464,8 +527,8 @@ def io_worker(state: AppState) -> None:
                     else:
                         state.result_queue.put(("response", response, None))
 
-            elif action == "meta":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "meta":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -473,8 +536,8 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("meta", timeout_s=3.0)
                     state.result_queue.put(("meta_ok", response))
 
-            elif action == "history":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "history":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -482,8 +545,8 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("history", timeout_s=3.0)
                     state.result_queue.put(("history_ok", response))
 
-            elif action == "source":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "source":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -491,8 +554,8 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("source", timeout_s=3.0)
                     state.result_queue.put(("source_ok", response))
 
-            elif action == "validate":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "validate":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -504,8 +567,8 @@ def io_worker(state: AppState) -> None:
                     else:
                         state.result_queue.put(("validate_ok", response))
 
-            elif action == "explain":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "explain":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -513,8 +576,8 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("explain", timeout_s=3.0)
                     state.result_queue.put(("explain_ok", response))
 
-            elif action == "identity":
-                with SerialSession.open(port=state.port, settle_s=5.0) as session:
+                elif action == "identity":
+                    session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
@@ -522,27 +585,39 @@ def io_worker(state: AppState) -> None:
                     response = session.send_protocol("?", timeout_s=3.0)
                     state.result_queue.put(("identity_ok", response))
 
-            elif action == "load":
-                persist = args[0] if args else False
-                _do_load(state, persist)
+                elif action == "load":
+                    # Load opens its own session - close ours so it doesn't interfere
+                    # After load (especially with persist), device may reboot
+                    persist = args[0] if args else False
+                    close_persistent(device_rebooting=persist)
+                    _do_load(state, persist)
 
-            elif action == "snapshot_create":
-                filename = args[0] if args else "snapshot.cdsnap"
-                safe_save = args[1] if len(args) > 1 else False
-                _do_snapshot_create(state, filename, safe_save)
+                elif action == "snapshot_create":
+                    # Snapshot opens its own session, no device reboot
+                    close_persistent()
+                    filename = args[0] if args else "snapshot.cdsnap"
+                    safe_save = args[1] if len(args) > 1 else False
+                    _do_snapshot_create(state, filename, safe_save)
 
-            elif action == "restore_preview":
-                snapshot_path = args[0]
-                _do_restore_preview(state, snapshot_path)
+                elif action == "restore_preview":
+                    snapshot_path = args[0]
+                    _do_restore_preview(state, snapshot_path)
 
-            elif action == "restore":
-                snapshot_path = args[0]
-                _do_restore(state, snapshot_path)
+                elif action == "restore":
+                    # Restore opens its own session and reboots device
+                    close_persistent(device_rebooting=True)
+                    snapshot_path = args[0]
+                    _do_restore(state, snapshot_path)
 
-        except SerialError as e:
-            state.result_queue.put(("error", str(e)))
-        except Exception as e:
-            state.result_queue.put(("error", f"Unexpected error: {e}"))
+            except SerialError as e:
+                # Serial error - close session so next command reconnects
+                close_persistent()
+                state.result_queue.put(("error", str(e)))
+            except Exception as e:
+                state.result_queue.put(("error", f"Unexpected error: {e}"))
+    finally:
+        # Clean up on exit
+        close_persistent()
 
 
 def process_results(state: AppState) -> None:
