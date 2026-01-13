@@ -81,6 +81,7 @@ class Action(Enum):
     SEND = auto()
     HELP = auto()
     PINS = auto()  # Open Pins Inspector
+    PIN_CLAIM = auto()  # Claim pin (after input prompt)
 
 
 @dataclass
@@ -144,6 +145,7 @@ class AppState:
     pins_selected: int = 0  # Currently selected GPIO index
     pins_gpios: list = field(default_factory=list)  # Sorted list of GPIO numbers
     pins_loading: bool = False
+    pins_action_gpio: int | None = None  # GPIO for pending action
 
 
 def create_main_menu(state: AppState) -> Menu:
@@ -620,6 +622,74 @@ def io_worker(state: AppState) -> None:
                     board_id, pins_data = parse_pins_response(response)
                     state.result_queue.put(("pins_ok", board_id, pins_data))
 
+                elif action == "pin_claim":
+                    gpio = args[0]
+                    owner = args[1]
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol(f"pin-claim {gpio} {owner}", timeout_s=3.0)
+                    has_err, err_msg = is_error(response)
+                    if has_err:
+                        state.result_queue.put(("pin_action_error", f"Claim failed: {err_msg}"))
+                    else:
+                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} claimed by {owner}"))
+                        # Refresh pins after action
+                        state.io_queue.put(("pins",))
+
+                elif action == "pin_release":
+                    gpio = args[0]
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol(f"pin-release {gpio}", timeout_s=3.0)
+                    has_err, err_msg = is_error(response)
+                    if has_err:
+                        state.result_queue.put(("pin_action_error", f"Release failed: {err_msg}"))
+                    else:
+                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} released"))
+                        state.io_queue.put(("pins",))
+
+                elif action == "pin_mode":
+                    gpio = args[0]
+                    mode = args[1]
+                    pull = args[2] if len(args) > 2 else None
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    cmd = f"pin-mode {gpio} {mode}"
+                    if pull:
+                        cmd += f" pull={pull}"
+                    response = session.send_protocol(cmd, timeout_s=3.0)
+                    has_err, err_msg = is_error(response)
+                    if has_err:
+                        state.result_queue.put(("pin_action_error", f"Mode change failed: {err_msg}"))
+                    else:
+                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} set to {mode}"))
+                        state.io_queue.put(("pins",))
+
+                elif action == "pin_write":
+                    gpio = args[0]
+                    value = args[1]
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+
+                    response = session.send_protocol(f"pin-write {gpio} {value}", timeout_s=3.0)
+                    has_err, err_msg = is_error(response)
+                    if has_err:
+                        state.result_queue.put(("pin_action_error", f"Write failed: {err_msg}"))
+                    else:
+                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} = {value}"))
+                        state.io_queue.put(("pins",))
+
             except SerialError as e:
                 # Serial error - close session so next command reconnects
                 close_persistent()
@@ -806,6 +876,14 @@ def process_results(state: AppState) -> None:
             state.pins_loading = False
             state.log.append(f"Pins loaded ({len(pins_data)} GPIOs)", COLOR_SUCCESS)
 
+        elif result_type == "pin_action_ok":
+            message = result[1]
+            state.log.append(message, COLOR_SUCCESS)
+
+        elif result_type == "pin_action_error":
+            message = result[1]
+            state.log.append(message, COLOR_ERROR)
+
 
 def handle_input(state: AppState, key: int) -> None:
     """Handle keyboard input based on current screen."""
@@ -928,13 +1006,28 @@ def handle_confirm_input(state: AppState, key: int) -> None:
 def handle_text_input(state: AppState, key: int) -> None:
     """Handle text input dialog."""
     if key == 27:  # Escape
-        state.screen = Screen.HOME
+        # Return to appropriate screen based on action
+        if state.input_action == Action.PIN_CLAIM:
+            state.screen = Screen.PINS
+        else:
+            state.screen = Screen.HOME
+        state.pins_action_gpio = None
         curses.curs_set(0)
     elif key == ord("\n") or key == ord("\r"):
         if state.input_action == Action.SEND and state.input_value:
             state.log.append(f"> {state.input_value}", COLOR_BANNER)
             state.io_queue.put(("send", state.input_value))
-        state.screen = Screen.HOME
+            state.screen = Screen.HOME
+        elif state.input_action == Action.PIN_CLAIM and state.input_value:
+            # Execute pin claim with entered owner
+            gpio = state.pins_action_gpio
+            owner = state.input_value.strip()
+            if gpio is not None and owner:
+                state.io_queue.put(("pin_claim", gpio, owner))
+            state.pins_action_gpio = None
+            state.screen = Screen.PINS
+        else:
+            state.screen = Screen.HOME
         curses.curs_set(0)
     elif key == curses.KEY_BACKSPACE or key == 127:
         if state.input_cursor > 0:
@@ -1024,6 +1117,11 @@ def handle_restore_wizard_input(state: AppState, key: int) -> None:
 
 def handle_pins_input(state: AppState, key: int) -> None:
     """Handle input on the Pins Inspector screen."""
+    # Get selected GPIO
+    selected_gpio = None
+    if state.pins_gpios and 0 <= state.pins_selected < len(state.pins_gpios):
+        selected_gpio = state.pins_gpios[state.pins_selected]
+
     if key == 27:  # Escape
         state.screen = Screen.HOME
     elif key == ord("r") or key == ord("R"):
@@ -1043,6 +1141,49 @@ def handle_pins_input(state: AppState, key: int) -> None:
     elif key == curses.KEY_END:
         if state.pins_gpios:
             state.pins_selected = len(state.pins_gpios) - 1
+    elif key == ord("c") or key == ord("C"):
+        # Claim selected pin - prompt for owner
+        if selected_gpio is not None:
+            state.pins_action_gpio = selected_gpio
+            state.input_prompt = f"Owner for GPIO{selected_gpio}:"
+            state.input_value = ""
+            state.input_cursor = 0
+            state.input_action = Action.PIN_CLAIM
+            state.screen = Screen.INPUT
+    elif key == ord("u") or key == ord("U"):
+        # Release/unclaim selected pin
+        if selected_gpio is not None:
+            state.io_queue.put(("pin_release", selected_gpio))
+    elif key == ord("t") or key == ord("T"):
+        # Toggle pin (read then write opposite)
+        if selected_gpio is not None:
+            pin_state = state.pins_data.get(selected_gpio)
+            if pin_state:
+                # Safety check: refuse to toggle strapping/flash pins
+                if pin_state.is_strapping() or pin_state.is_flash():
+                    state.log.append(f"GPIO{selected_gpio} is dangerous (strapping/flash)", COLOR_ERROR)
+                elif pin_state.level is not None:
+                    new_value = 1 - pin_state.level
+                    state.io_queue.put(("pin_write", selected_gpio, new_value))
+                else:
+                    state.log.append(f"GPIO{selected_gpio} level unknown, cannot toggle", COLOR_ERROR)
+    elif key == ord("i") or key == ord("I"):
+        # Set pin to input
+        if selected_gpio is not None:
+            pin_state = state.pins_data.get(selected_gpio)
+            if pin_state and pin_state.is_flash():
+                state.log.append(f"GPIO{selected_gpio} is a flash pin, cannot change mode", COLOR_ERROR)
+            else:
+                state.io_queue.put(("pin_mode", selected_gpio, "in", "up"))
+    elif key == ord("o") or key == ord("O"):
+        # Set pin to output
+        if selected_gpio is not None:
+            pin_state = state.pins_data.get(selected_gpio)
+            if pin_state and (pin_state.is_flash() or pin_state.is_input_only()):
+                flags_str = ",".join(pin_state.flags) if pin_state.flags else "restricted"
+                state.log.append(f"GPIO{selected_gpio} cannot be set to output ({flags_str})", COLOR_ERROR)
+            else:
+                state.io_queue.put(("pin_mode", selected_gpio, "out"))
 
 
 def execute_action(state: AppState, action: Action | None) -> None:

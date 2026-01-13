@@ -58,5 +58,5 @@ KEY_HINTS = {
     "load_wizard": "Space:Toggle  Enter:Start  Esc:Cancel",
     "snapshot_wizard": "Space:Toggle  Enter:Create  Esc:Cancel",
     "restore_wizard": "Arrows:Navigate  Enter:Select/Restore  Esc:Cancel",
-    "pins": "j/k:Navigate  r:Refresh  Esc:Back",
+    "pins": "j/k:Nav  c:Claim  u:Release  t:Toggle  i:In  o:Out  r:Refresh  Esc:Back",
 }
