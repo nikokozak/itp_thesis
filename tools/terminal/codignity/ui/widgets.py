@@ -1,4 +1,11 @@
-"""Minimal curses widgets for Codignity TUI."""
+"""Minimal curses widgets for Codignity TUI.
+
+TODO(thesis): Widgets need polish:
+- FileBrowser: Add search/filter, remember last path, handle long filenames
+- ProgressBar: Add ETA calculation, smoother animation
+- Checkbox: Add keyboard focus indicator, group support
+- General: Consistent border styles, color theming
+"""
 
 from __future__ import annotations
 

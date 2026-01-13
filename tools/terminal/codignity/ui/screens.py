@@ -1,4 +1,12 @@
-"""Screen management and state machine for Codignity TUI."""
+"""Screen management and state machine for Codignity TUI.
+
+TODO(thesis): TUI wizards are functional but need polish:
+- Load wizard: Add cancel-during-load support, better error display
+- Snapshot wizard: Add filename editing, show defs count before create
+- Restore wizard: Improve diff preview, add cancel-during-restore
+- General: Keyboard shortcuts shown in wizard frames, consistent styling
+- Testing: Needs hardware testing of all wizard flows end-to-end
+"""
 
 from __future__ import annotations
 
