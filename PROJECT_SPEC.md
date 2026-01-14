@@ -44,6 +44,81 @@ A node in this system:
 
 ---
 
+## Part I-B: The Deeper Argument
+
+### The Trap of the Big Computer
+
+Since the advent of digital computation, we've been trapped by a persistent idea: computation belongs to *the big computer*. Complex, centralized, inaccessible black boxes that exist elsewhere, controlled by someone else.
+
+As hardware miniaturized, we treated small devices as derivatives of this larger whole—stunted fragments, not complete systems. We learned to develop them as:
+- **Disposable elements** — single-purpose, never to be reused
+- **Little black boxes** — operating on a more limited set of possibility than their hardware actually permits
+
+### The Coming Flood
+
+As AI advances and miniaturization continues, we face a proliferation of embedded devices unlike anything before. Our world will be flooded with sensors, microcontrollers, and embedded hardware—each one deployed as a black box with no reusability in sight.
+
+This is not merely a sustainability problem (though it is that). It's deeper.
+
+### The Instability Assumption
+
+We've constructed an entire paradigm of embedded computation built on an assumption of permanent global stability—stable supply chains, stable infrastructure, stable corporate existence. Every microcontroller deployed is a bet that the systems surrounding it will persist indefinitely.
+
+But we are witnessing geopolitical moves that point to an unstable future. In a highly globalized world, that instability translates into disruptions of supply chains, manufacturing capability, and the infrastructure that makes our current development model possible.
+
+What happens when:
+- The company that made your device goes bankrupt?
+- The cloud service it depends on shuts down?
+- The toolchain required to modify it becomes unavailable?
+- Supply chains break and replacement isn't an option?
+
+Currently: the device becomes an inert artifact. Computational capacity we can never reclaim.
+
+### The Civilizational Question
+
+What happens 100 years from now? 200 years? If we face societal disruption—environmental, political, economic—and future generations encounter these devices, they will find them useless. Not because the hardware failed, but because we designed them to be illegible, unmodifiable, dependent on external systems that no longer exist.
+
+We can read cuneiform tablets from 5000 years ago. We cannot read most software from 30 years ago. This is a civilizational failure.
+
+### The Cyberpunk Observation
+
+There's a reason cyberpunk visions of the future feel utopian despite their dystopian aesthetics. In those futures, computation is *fungible*—a universal substrate. A hacker plugs into a motorcycle and it's just... a computer. The vending machine, the security system, the prosthetic arm—they're all accessible as computation if you have the skills.
+
+This is the hidden utopia: not the neon or the implants, but the assumption that any device with a processor is, at some level, just "a computer" you can interact with.
+
+**We built the opposite.**
+
+We have exponentially more processing power than any cyberpunk author imagined. Your smart toothbrush has more compute than the decks in Neuromancer. But none of it is accessible *as computation*. Every device is:
+- A proprietary island
+- Locked to a single purpose
+- Incompatible with everything else
+- Illegible by design
+
+We built the processors. We abandoned the universality.
+
+### The Theoretical Betrayal
+
+Computation *is* theoretically fungible—that's what Turing completeness means. Any processor can compute anything any other processor can compute. This is the foundation of computer science.
+
+But we've buried this universality under so many layers of proprietary lock-in that it's practically inaccessible. The substrate is universal; the implementation is entirely fragmented.
+
+Forth is interesting precisely because it restores this fungibility. A Forth environment is the same whether it's on a 1970s minicomputer or an ESP32. It returns computation to its universal substrate.
+
+### The Reframing
+
+This project proposes an ideological shift: from *devices as nodes in a system* to *devices as self-contained computational environments*. Each one complete, legible, modifiable with nothing but itself.
+
+**One sentence:**
+> "Every device should survive the system that created it."
+
+**One paragraph:**
+> We deploy billions of microcontrollers assuming the world that made them will persist—the companies, the cloud services, the toolchains, the supply chains. History suggests otherwise. Codignity is a firmware foundation that makes embedded devices self-sufficient: able to identify themselves, explain their state, be reprogrammed, and recover from failure—requiring nothing beyond the device itself. Not because we expect collapse, but because computation shouldn't depend on the permanence of any external system.
+
+**The cyberpunk framing:**
+> We were promised that any computer could be *a computer*. We got billions of processors we can't use. Codignity returns embedded devices to the universal computational substrate they always were.
+
+---
+
 ## Part II: Architecture
 
 ### System Topology
