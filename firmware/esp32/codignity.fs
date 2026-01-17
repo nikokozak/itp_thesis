@@ -13,7 +13,7 @@ only forth definitions also internals also interrupts
 
 \ Computational Dignity protocol (ESP32 / ESP32forth)
 \ TODO(thesis): Replace dummy sampling with real sensor read + timestamp source.
-\ TODO(thesis): Persist history/source to flash (SPIFFS) and implement rollback.
+\ TODO(thesis): Extend rollback beyond single last-known-good (and document flash-wear tradeoffs).
 \ TODO(thesis): Replace `bye`-based reboot with a clean ESP32 restart primitive.
 
 vocabulary cd-user
@@ -56,7 +56,7 @@ variable cd-tick
 
 : cd.!end ( -- ) ." ! end" cr ;
 : cd.!ok ( -- ) ." ! ok" cr ;
-: cd.!sample ( value ts -- ) ." ! " . . cr ;
+: cd.!sample ( value ts -- ) ." ! " swap . . cr ;
 : cd.# ( a n -- ) ." # " type cr ;
 
 variable cd-error-emitted
@@ -166,6 +166,24 @@ variable cd-lkg-n
     drop drop 0 exit
   then
   drop close-file drop -1 ;
+
+\ Copy a file on SPIFFS (best-effort, used for safe-save LKG).
+256 constant cd-copy-buf-size
+create cd-copy-buf cd-copy-buf-size allot
+
+: (cd-copy-file) { sa sn da dn -- }
+  sa sn r/o open-file throw { sfid }
+  da dn delete-file drop
+  da dn w/o create-file throw { dfid }
+  begin
+    cd-copy-buf cd-copy-buf-size sfid read-file throw { nread }
+    nread 0= if leave then
+    cd-copy-buf nread dfid write-file throw
+  again
+  sfid close-file throw
+  dfid close-file throw ;
+
+: cd-copy-file ( sa sn da dn -- ok? ) ['] (cd-copy-file) catch 0= ;
 
 \ ------------------------------------------------------------
 : cd-dump ( n -- )
@@ -817,8 +835,7 @@ variable cd-flags-len
   ." ! children " cd-children$ type cr
   ." ! fifo " cd-fifo-size . cr
   ." ! core ? s n d c" cr
-  ." ! extended explain source history define meta save validate safe-save restart recover rollback repl" cr
-  ." ! pins pins pin-status pin-claim pin-release pin-mode pin-read pin-write" cr
+  ." ! extended explain source history define meta save validate safe-save restart recover rollback repl pins pin-status pin-claim pin-release pin-mode pin-read pin-write" cr
   cd.!end ;
 
 : cd-validate? ( -- f )
@@ -900,6 +917,56 @@ variable cd-old-notfound
   cd.!ok
   cd.!end ;
 
+: cd-dispatch ( a n -- )
+  dup 0= if 2drop exit then
+  \ Routing prefix: @name cmd (Milestone D; currently unimplemented).
+  2dup over c@ [char] @ = if
+    cd-drop1 cd-route 2drop exit
+  then
+  2dup s" ?" str= if 2drop ? exit then
+  2dup s" s" str= if 2drop s exit then
+  2dup s" n" str= if 2drop n exit then
+  2dup s" d" str= if 2drop d exit then
+  2dup s" c" str= if 2drop c exit then
+  2dup s" explain" str= if 2drop explain exit then
+  2dup s" history" str= if 2drop history exit then
+  2dup s" source" str= if 2drop source exit then
+  2dup s" define" str= if 2drop define exit then
+  2dup s" meta" str= if 2drop meta exit then
+  2dup s" save" str= if 2drop save exit then
+  2dup s" validate" str= if 2drop validate exit then
+  2dup s" safe-save" str= if 2drop safe-save exit then
+  2dup s" restart" str= if 2drop restart exit then
+  2dup s" recover" str= if 2drop recover exit then
+  2dup s" rollback" str= if 2drop rollback exit then
+  2dup s" repl" str= if 2drop repl exit then
+  2dup s" pins" str= if 2drop pins exit then
+  2dup s" pin-status" str= if 2drop pin-status exit then
+  2dup s" pin-claim" str= if 2drop pin-claim exit then
+  2dup s" pin-release" str= if 2drop pin-release exit then
+  2dup s" pin-mode" str= if 2drop pin-mode exit then
+  2dup s" pin-read" str= if 2drop pin-read exit then
+  2dup s" pin-write" str= if 2drop pin-write exit then
+  s" notfound" cd.#err
+  2dup cd.#
+  cd.!end
+  2drop ;
+
+: cd-handle-line ( -- )
+  \ Enforce protocol semantics: one request per line, no ambient stack state.
+  0 state !
+  sp0 sp!
+  fp0 fp!
+  cd-error-reset
+
+  \ Parse first token from the current TIB line.
+  cd-rest-of-line cd-token dup 0= if cd-5drop exit then drop   \ aTok nTok aRest nRest
+  { aTok nTok aRest nRest }
+  \ Advance >in so command words can parse arguments via `bl parse`.
+  aRest tib - >in !
+  aTok nTok cd-dispatch
+  cd-consume-line ;
+
 : cd-node ( -- )
   echo @ cd-old-echo !
   arrow @ cd-old-arrow !
@@ -908,7 +975,6 @@ variable cd-old-notfound
   0 cd-exit !
   0 echo !
   0 arrow !
-  cd-error-reset
   ['] cd-notfound 'notfound !
   begin
     cd-exit @ 0<> if
@@ -917,7 +983,7 @@ variable cd-old-notfound
       refill 0= if
         10 ms
       else
-        ['] evaluate-buffer catch ?dup if
+        ['] cd-handle-line catch ?dup if
           0 state ! sp0 sp! fp0 fp! rp0 rp!
           cd-handle-exception
         then
@@ -958,8 +1024,13 @@ variable cd-old-notfound
 : safe-save ( -- )
   cd-validate? if
     cd-ensure-autostart
-    cd-lkg$ save-name
-    remember
+    \ Backup last saved image before overwriting the primary remember file.
+    cd-myforth$ cd-file-exists? if
+      cd-myforth$ cd-lkg$ cd-copy-file 0= if
+        s" lkg_io" cd.#err cd.!end exit
+      then
+    then
+    cd-myforth$ save-name
     s" safe-save" cd-history-event
     cd.!ok
   else
@@ -1033,6 +1104,13 @@ create cd-ch 1 allot
   ['] history see-xt
   ['] define see-xt
   ['] meta see-xt
+  ['] pins see-xt
+  ['] pin-status see-xt
+  ['] pin-claim see-xt
+  ['] pin-release see-xt
+  ['] pin-mode see-xt
+  ['] pin-read see-xt
+  ['] pin-write see-xt
   ['] save see-xt
   ['] validate see-xt
   ['] safe-save see-xt
