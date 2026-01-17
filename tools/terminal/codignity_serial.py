@@ -48,13 +48,34 @@ def _autodetect_port() -> str:
 def _read_until(
     ser: serial.Serial, marker: bytes, timeout_s: float
 ) -> tuple[bytes, bool]:
+    def find_line_marker(buf: bytes | bytearray, line: bytes) -> int | None:
+        """Match a marker only when it appears as a full line."""
+        start = 0
+        while True:
+            pos = buf.find(line, start)
+            if pos == -1:
+                return None
+            if pos == 0 or buf[pos - 1] in (0x0A, 0x0D):
+                end = pos + len(line)
+                if end == len(buf):
+                    return end
+                if buf[end : end + 2] == b"\r\n":
+                    return end + 2
+                if buf[end : end + 1] in (b"\n", b"\r"):
+                    return end + 1
+            start = pos + 1
+
     deadline = time.time() + timeout_s
     buf = bytearray()
     while time.time() < deadline:
         chunk = ser.read(1024)
         if chunk:
             buf.extend(chunk)
-            if marker in buf:
+            if marker == b"! end":
+                end = find_line_marker(buf, marker)
+                if end is not None:
+                    return bytes(buf[:end]), True
+            elif marker in buf:
                 pos = buf.find(marker)
                 end = pos + len(marker)
                 if buf[end : end + 2] == b"\r\n":

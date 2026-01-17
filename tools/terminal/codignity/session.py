@@ -95,6 +95,49 @@ def _looks_fatal(buf: bytes) -> bool:
     return b"Guru Meditation Error" in buf
 
 
+def _looks_repl_error(buf: bytes) -> bool:
+    """Check if buffer contains a REPL error.
+
+    ESP32forth typically emits lines beginning with 'ERROR:' when a word fails
+    to execute (e.g., NOT FOUND, stack underflow). This is not a device crash,
+    but it should fail higher-level workflows like firmware loading.
+    """
+    return b"ERROR:" in buf
+
+
+def _find_line_marker(buf: bytes | bytearray, marker: bytes) -> int | None:
+    """Find a marker that must appear as a full line.
+
+    The Codignity protocol terminator is the line exactly '! end'. Using a raw
+    substring search risks false positives if '! end' appears inside payload
+    (e.g., in `source` output). This helper only matches when:
+      - the marker starts at buffer start or after a newline, AND
+      - the marker is followed by a newline (CRLF/LF/CR) or buffer end.
+
+    Returns:
+        The end index (including trailing newline if present) or None.
+    """
+    start = 0
+    while True:
+        pos = buf.find(marker, start)
+        if pos == -1:
+            return None
+
+        # Require start-of-line.
+        if pos == 0 or buf[pos - 1] in (0x0A, 0x0D):
+            end = pos + len(marker)
+
+            # Require end-of-line (or end-of-buffer).
+            if end == len(buf):
+                return end
+            if buf[end : end + 2] == b"\r\n":
+                return end + 2
+            if buf[end : end + 1] in (b"\n", b"\r"):
+                return end + 1
+
+        start = pos + 1
+
+
 class SerialSession:
     """Manages a serial connection to an ESP32forth/Codignity device.
 
@@ -243,6 +286,29 @@ class SerialSession:
             time.sleep(0.01)
         return ReadResult(bytes(buf), False)
 
+    def read_until_line(self, marker: bytes, timeout_s: float) -> ReadResult:
+        """Read from device until a full-line marker is found or timeout."""
+        try:
+            import serial  # type: ignore
+            serial_exc: tuple[type[BaseException], ...] = (OSError, serial.SerialException)
+        except ImportError:
+            serial_exc = (OSError,)
+        deadline = time.time() + timeout_s
+        buf = bytearray()
+        while time.time() < deadline:
+            try:
+                chunk = self._ser.read(1024)
+            except serial_exc as exc:
+                raise SerialError(f"Failed to read from {self._port!r}: {exc}") from exc
+            if chunk:
+                buf.extend(chunk)
+                end = _find_line_marker(buf, marker)
+                if end is not None:
+                    return ReadResult(bytes(buf[:end]), True)
+                continue
+            time.sleep(0.01)
+        return ReadResult(bytes(buf), False)
+
     def send_protocol(self, line: str, timeout_s: float = 3.0) -> str:
         """Send a protocol command and wait for `! end` marker.
 
@@ -258,7 +324,7 @@ class SerialSession:
             DeviceError: If device reports a fatal error.
         """
         self.send_line(line)
-        result = self.read_until(MARKER_END, timeout_s)
+        result = self.read_until_line(MARKER_END, timeout_s)
 
         if _looks_fatal(result.data):
             raise DeviceError(f"Device reported fatal error: {result.text}")
@@ -290,6 +356,9 @@ class SerialSession:
 
         if _looks_fatal(result.data):
             raise DeviceError(f"Device reported fatal error: {result.text}")
+
+        if _looks_repl_error(result.data):
+            raise SerialError(f"Device reported REPL error after sending: {line!r}\n{result.text}")
 
         if not result.found:
             raise SerialTimeoutError(
