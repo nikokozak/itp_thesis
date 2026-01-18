@@ -2,11 +2,12 @@
 """Codignity TUI - ncurses interface for Codignity nodes.
 
 Run from repo root:
-    .venv/bin/python tools/terminal/codignity_tui.py [--port PORT]
+    .venv/bin/python tools/terminal/codignity_tui.py [--port PORT] [--theme THEME]
 
 Examples:
     codignity_tui.py                    # Auto-detect port
     codignity_tui.py --port /dev/ttyUSB0
+    codignity_tui.py --theme classic     # Conservative 8-color theme
 """
 
 from __future__ import annotations
@@ -33,11 +34,16 @@ def main(argv: list[str] | None = None) -> int:
         "--port",
         help="Serial port path (auto-detects if omitted).",
     )
+    parser.add_argument(
+        "--theme",
+        choices=["cyberpunk", "classic"],
+        help="Color theme (default: cyberpunk). Also configurable via CODIGNITY_TUI_THEME.",
+    )
 
     args = parser.parse_args(argv)
 
     try:
-        return run_tui(port=args.port)
+        return run_tui(port=args.port, theme=args.theme)
     except KeyboardInterrupt:
         return 0
 
