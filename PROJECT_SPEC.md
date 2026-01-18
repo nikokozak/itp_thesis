@@ -133,7 +133,7 @@ This project proposes an ideological shift: from *devices as nodes in a system* 
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         SMART NODE                              │
-│                    (STM32/RP2040 + Forth)                       │
+│                    (ESP32 + ESP32forth)                         │
 │   Full REPL. Self-explaining. Routes to children.               │
 └──────┬─────────────────┬─────────────────┬──────────────────────┘
        │ UART            │ UART            │ UART

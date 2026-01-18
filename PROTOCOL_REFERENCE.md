@@ -16,7 +16,7 @@
 
 | Command | Arguments | Response | Description |
 |---------|-----------|----------|-------------|
-| `explain` | — | Natural language | Full description |
+| `explain` | — | Identity + command list | Describe capabilities |
 | `source` | — | Forth listing | Show all code |
 | `history` | — | Modification log | Who changed what |
 | `meta` | `[key] [value]` | Key/value | Read or set persisted metadata |
@@ -28,6 +28,13 @@
 | `save` | — | `! ok` | Persist to flash |
 | `restart` | — | `! rebooting` | Reboot node |
 | `repl` | — | `! ok` | Exit protocol mode to REPL (dev) |
+| `pins` | — | Pin dump | List GPIO states (Milestone E) |
+| `pin-status` | `<pin>` | Pin line | One GPIO state line (Milestone E) |
+| `pin-claim` | `<pin> <owner>` | `! ok` | Claim ownership label (Milestone E) |
+| `pin-release` | `<pin>` | `! ok` | Release ownership (Milestone E) |
+| `pin-mode` | `<pin> in\|out [pull=up\|down\|none]` | `! ok` | Configure GPIO (Milestone E) |
+| `pin-read` | `<pin>` | `! value <0\|1>` | Read GPIO level (Milestone E) |
+| `pin-write` | `<pin> 0\|1` | `! ok` | Write GPIO level (Milestone E) |
 
 ### Safety Commands (All Nodes)
 
@@ -61,13 +68,15 @@
 ! role <role>
 ! mcu <chip>
 ! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
+! board <board-id>      ← optional (if set via `meta board`)
 ! fifo <size>
 ! units <units>         ← optional (if set via `meta`)
 ! pins <pins>           ← optional (if set via `meta`)
 ! children <count>
-! child <n> <bus> <name> <mcu>
 ! end
 ```
+
+Child descriptors (`! child ...`) are planned for Milestone D routing; currently only `children` is reported.
 
 ### Sample Response (`s`)
 
@@ -92,12 +101,31 @@
 ! role <role>
 ! mcu <chip>
 ! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
+! board <board-id>      ← optional
 ! units <units>         ← optional
 ! pins <pins>           ← optional
 ! children <count>
 ! fifo <size>
 ! core <cmd> <cmd> ...
 ! extended <cmd> <cmd> ...
+! end
+```
+
+### Pins Response (`pins`)
+
+```
+! board <board-id>      ← optional
+! pin gpio=<n> mode=<mode> level=<0|1|-> pull=<none|up|down> owner=<token|-> flags=<csv|->
+! ...
+! end
+```
+
+Pin tokens accepted by pin commands: `<n>`, `D<n>`, `GPIO<n>`.
+
+### Pin Read Response (`pin-read`)
+
+```
+! value <0|1>
 ! end
 ```
 

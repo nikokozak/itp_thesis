@@ -28,7 +28,7 @@ ATtiny nodes implement only:
 | Command | Response |
 |---------|----------|
 | `?` | `! id <name>` `! mcu attiny<model>` `! fifo <size>` `! end` |
-| `s` | `! <timestamp> <value>` `! end` |
+| `s` | `! <value> <timestamp>` `! end` |
 | `n` | `! <count>` `! end` |
 | `d [N]` | `! <ts> <val>` (repeated) `! end` |
 | `c` | `! ok` `! end` |
