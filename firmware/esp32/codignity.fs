@@ -1012,6 +1012,9 @@ variable cd-old-notfound
 : cd-safe-pressed? ( -- f ) cd-safe-gpio digitalRead 0= ;
 
 : cd-boot ( -- )
+  \ Reload persisted metadata from SPIFFS so `meta` survives resets without
+  \ requiring a full image save.
+  cd-meta-path$ cd-file-exists? if cd-meta-load then
   cd-safe-setup
   cd-safe-pressed? if
     -1 echo !
@@ -1041,6 +1044,7 @@ variable cd-old-notfound
       then
     then
     cd-myforth$ save-name
+    remember
     s" safe-save" cd-history-event
     cd.!ok
   else
