@@ -127,7 +127,7 @@ def init_colors(theme: str | None = None) -> bool:
 
 # Key hints
 KEY_HINTS = {
-    "home": "p Probe  g Pins  m Meta  h Hist  s Src  v Val  l Load  c Snap  r Rest  Tab Menu  ? Help  q Quit",
+    "home": "p Probe  g Pins  m Meta  h Hist  s Src  v Val  l Load  c Snap  r Rest  ↑/↓ Scroll  Tab Menu  ? Help  q Quit",
     "menu": "j/k or Arrows Navigate  Enter Select  Esc Close",
     "confirm": "y Yes  n No  Esc Cancel",
     "input": "Enter Submit  Esc Cancel",

@@ -969,10 +969,18 @@ def handle_home_input(state: AppState, key: int) -> None:
             execute_action(state, Action.PINS)
     elif key == ord("x") or key == ord("X"):
         execute_action(state, Action.CLEAR)
+    elif key in (curses.KEY_UP, ord("k")):
+        state.log.scroll_up(1)
+    elif key in (curses.KEY_DOWN, ord("j")):
+        state.log.scroll_down(1)
     elif key == curses.KEY_PPAGE:
         state.log.scroll_up(5)
     elif key == curses.KEY_NPAGE:
         state.log.scroll_down(5)
+    elif key == curses.KEY_HOME:
+        state.log.scroll_to_top()
+    elif key == curses.KEY_END:
+        state.log.scroll_to_bottom()
     elif key == ord("\n") or key == ord("\r"):
         # Prompt for command
         state.input_prompt = "Command:"
@@ -1359,7 +1367,7 @@ def draw_help(win: curses.window, state: AppState) -> None:
     row += 1
     add_binding(row, "Enter", "Send raw protocol line", COLOR_PROMPT)
     row += 1
-    add_binding(row, "PgUp/PgDn", "Scroll log   ? Help   q Quit", COLOR_PROMPT)
+    add_binding(row, "↑/↓", "Scroll log line   PgUp/PgDn Page   Home/End Jump", COLOR_PROMPT)
 
     row += 2
     add_line(row, "ACTIONS", COLOR_TITLE, curses.A_BOLD)
@@ -1858,7 +1866,7 @@ def draw_screen(win: curses.window, state: AppState) -> None:
                         (" Enter  Send command", COLOR_PANEL, 0),
                         (" Tab    Menu", COLOR_PANEL, 0),
                         (" ?      Help", COLOR_PANEL, 0),
-                        (" PgUp/PgDn  Scroll log", COLOR_PANEL, 0),
+                        (" ↑/↓, PgUp/PgDn  Scroll", COLOR_PANEL, 0),
                         (" q      Quit", COLOR_PANEL, 0),
                     ]
                 )

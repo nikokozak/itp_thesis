@@ -30,6 +30,19 @@ from .theme import (
     TAGLINE_LINES,
 )
 
+
+def _sanitize_log_line(text: str) -> str:
+    """Make log lines safe for curses rendering (strip control chars)."""
+    if not text:
+        return ""
+
+    text = text.replace("\r", "")
+    text = text.expandtabs(4)
+
+    # Replace remaining control characters with a visible placeholder.
+    return "".join(ch if (" " <= ch <= "~" or ch >= "\u00a0") else "�" for ch in text)
+
+
 def draw_chrome_line(
     win: curses.window,
     y: int,
@@ -223,7 +236,8 @@ class LogPane:
             return
 
         was_scrolled = self.scroll_offset > 0
-        new_lines = text.split("\n")
+        raw_lines = text.split("\n")
+        new_lines = [_sanitize_log_line(line) for line in raw_lines]
         for line in new_lines:
             self.lines.append((line, color_pair))
 
@@ -250,10 +264,13 @@ class LogPane:
         """Scroll to show the most recent lines."""
         self.scroll_offset = 0
 
+    def scroll_to_top(self) -> None:
+        """Scroll to show the oldest lines (clamped on draw)."""
+        self.scroll_offset = len(self.lines)
+
     def scroll_up(self, lines: int = 1) -> None:
         """Scroll up by N lines."""
-        max_offset = max(0, len(self.lines) - 1)
-        self.scroll_offset = min(max_offset, self.scroll_offset + lines)
+        self.scroll_offset = max(0, self.scroll_offset + lines)
 
     def scroll_down(self, lines: int = 1) -> None:
         """Scroll down by N lines."""
@@ -267,6 +284,11 @@ class LogPane:
 
         if total_lines == 0:
             return
+        if visible_lines <= 0 or width <= 0:
+            return
+
+        max_offset = max(0, total_lines - visible_lines)
+        self.scroll_offset = min(max(0, self.scroll_offset), max_offset)
 
         # Start from bottom, offset by scroll
         end_idx = total_lines - self.scroll_offset
