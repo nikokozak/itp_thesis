@@ -24,7 +24,21 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .theme import init_colors, KEY_HINTS, BANNER_HEIGHT
+from .theme import (
+    init_colors,
+    KEY_HINTS,
+    BANNER_HEIGHT,
+    COLOR_BORDER,
+    COLOR_DIM,
+    COLOR_ERROR,
+    COLOR_KEY_HINT,
+    COLOR_MENU_SELECTED,
+    COLOR_PANEL,
+    COLOR_PROMPT,
+    COLOR_SUCCESS,
+    COLOR_TITLE,
+    COLOR_WARNING,
+)
 from .widgets import (
     draw_banner,
     draw_chrome_line,
@@ -41,9 +55,6 @@ from .widgets import (
     draw_wizard_frame,
     Checkbox,
     FileBrowser,
-    COLOR_BANNER,
-    COLOR_ERROR,
-    COLOR_SUCCESS,
 )
 
 if TYPE_CHECKING:
@@ -59,6 +70,7 @@ class Screen(Enum):
     CONFIRM = auto()
     INPUT = auto()
     MESSAGE = auto()
+    HELP = auto()
     LOAD_WIZARD = auto()
     SNAPSHOT_WIZARD = auto()
     RESTORE_WIZARD = auto()
@@ -162,7 +174,7 @@ def create_main_menu(state: AppState) -> Menu:
         MenuItem("Load Firmware", "l", enabled=True),
         MenuItem("Create Snapshot", "c", enabled=connected),
         MenuItem("Restore Snapshot", "r", enabled=True),
-        MenuItem("Help", "e", enabled=True),
+        MenuItem("Help", "?", enabled=True),
         MenuItem("Clear Log", "x", enabled=True),
         MenuItem("Quit", "q", enabled=True),
     ]
@@ -182,7 +194,7 @@ def handle_menu_select(state: AppState, key: str) -> Action | None:
         "l": Action.LOAD,
         "c": Action.SNAPSHOT,
         "r": Action.RESTORE,
-        "e": Action.HELP,
+        "?": Action.HELP,
         "x": Action.CLEAR,
         "q": Action.QUIT,
     }
@@ -898,6 +910,8 @@ def handle_input(state: AppState, key: int) -> None:
     elif state.screen == Screen.MESSAGE:
         # Any key dismisses message
         state.screen = Screen.HOME
+    elif state.screen == Screen.HELP:
+        handle_help_input(state, key)
     elif state.screen == Screen.LOAD_WIZARD:
         handle_load_wizard_input(state, key)
     elif state.screen == Screen.SNAPSHOT_WIZARD:
@@ -915,7 +929,7 @@ def handle_home_input(state: AppState, key: int) -> None:
     elif key == ord("\t") or key == curses.KEY_F1:
         state.menu = create_main_menu(state)
         state.screen = Screen.MENU
-    elif key in (ord("?"), ord("e"), ord("E")):
+    elif key == ord("?"):
         execute_action(state, Action.HELP)
     elif key == ord("p") or key == ord("P"):
         execute_action(state, Action.PROBE)
@@ -1003,6 +1017,15 @@ def handle_confirm_input(state: AppState, key: int) -> None:
         state.screen = Screen.HOME
 
 
+def handle_help_input(state: AppState, key: int) -> None:
+    """Handle input on the help overlay."""
+    if key in (27, ord("q"), ord("Q"), ord("?")):
+        state.screen = Screen.HOME
+    elif key == ord("\t"):
+        state.menu = create_main_menu(state)
+        state.screen = Screen.MENU
+
+
 def handle_text_input(state: AppState, key: int) -> None:
     """Handle text input dialog."""
     if key == 27:  # Escape
@@ -1012,10 +1035,13 @@ def handle_text_input(state: AppState, key: int) -> None:
         else:
             state.screen = Screen.HOME
         state.pins_action_gpio = None
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
     elif key == ord("\n") or key == ord("\r"):
         if state.input_action == Action.SEND and state.input_value:
-            state.log.append(f"> {state.input_value}", COLOR_BANNER)
+            state.log.append(f"> {state.input_value}")
             state.io_queue.put(("send", state.input_value))
             state.screen = Screen.HOME
         elif state.input_action == Action.PIN_CLAIM and state.input_value:
@@ -1028,7 +1054,10 @@ def handle_text_input(state: AppState, key: int) -> None:
             state.screen = Screen.PINS
         else:
             state.screen = Screen.HOME
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
     elif key == curses.KEY_BACKSPACE or key == 127:
         if state.input_cursor > 0:
             state.input_value = (
@@ -1220,11 +1249,7 @@ def execute_action(state: AppState, action: Action | None) -> None:
         state.log.lines.clear()
         state.log.scroll_offset = 0
     elif action == Action.HELP:
-        state.log.append("— HELP —", COLOR_SUCCESS)
-        state.log.append("p Probe/connect   m Meta   h History   s Source   v Validate")
-        state.log.append("l Load   c Snapshot   r Restore   x Clear   q Quit")
-        state.log.append("Enter: send raw protocol command (try: meta, ?, explain)")
-        state.log.append("PgUp/PgDn: scroll log")
+        state.screen = Screen.HELP
 
     elif action == Action.LOAD:
         # Initialize load wizard state
@@ -1268,13 +1293,104 @@ def execute_confirmed_action(state: AppState, action: Action) -> None:
     pass
 
 
+def draw_help(win: curses.window, state: AppState) -> None:
+    """Draw a help overlay (keyboard map + workflow)."""
+    height, width = win.getmaxyx()
+    frame_height = min(height - 2, 24)
+    frame_width = min(width - 2, 78)
+
+    if frame_height < 12 or frame_width < 44:
+        try:
+            msg = "Terminal too small for help"
+            win.addstr(
+                height // 2,
+                max(0, (width - len(msg)) // 2),
+                msg[: max(0, width - 1)],
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
+        except curses.error:
+            pass
+        return
+
+    y, x, inner_h, inner_w = draw_wizard_frame(win, "Help", frame_height, frame_width)
+    if inner_h <= 0 or inner_w <= 0:
+        return
+
+    def add_line(row: int, text: str, color: int = COLOR_PANEL, attr: int = 0) -> None:
+        try:
+            win.addstr(
+                row,
+                x,
+                text[:inner_w].ljust(inner_w),
+                curses.color_pair(color) | attr,
+            )
+        except curses.error:
+            pass
+
+    def add_binding(row: int, key_label: str, desc: str, key_color: int = COLOR_PROMPT) -> None:
+        key_col_w = min(10, inner_w)
+        key_text = f"{key_label:<{key_col_w}}"
+        key_text = key_text[:key_col_w]
+
+        try:
+            win.addstr(row, x, key_text, curses.color_pair(key_color) | curses.A_BOLD)
+            win.addstr(
+                row,
+                x + key_col_w,
+                desc[: max(0, inner_w - key_col_w)].ljust(max(0, inner_w - key_col_w)),
+                curses.color_pair(COLOR_PANEL),
+            )
+        except curses.error:
+            pass
+
+    row = y + 1
+    add_line(row, "CODIGNITY // CONTROL DECK — HELP", COLOR_TITLE, curses.A_BOLD)
+    row += 1
+    try:
+        win.hline(row, x, curses.ACS_HLINE, min(inner_w, 60), curses.color_pair(COLOR_BORDER))
+    except curses.error:
+        pass
+    row += 1
+
+    row += 1
+    add_line(row, "GLOBAL", COLOR_TITLE, curses.A_BOLD)
+    row += 1
+    add_binding(row, "Tab", "Menu", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "Enter", "Send raw protocol line", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "PgUp/PgDn", "Scroll log   ? Help   q Quit", COLOR_PROMPT)
+
+    row += 2
+    add_line(row, "ACTIONS", COLOR_TITLE, curses.A_BOLD)
+    row += 1
+    add_binding(row, "p", "Probe / connect", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "m/h/s/v", "Meta / History / Source / Validate", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "l/c/r", "Load / Snapshot / Restore   g Pins   x Clear", COLOR_PROMPT)
+
+    row += 2
+    add_line(row, "PINS INSPECTOR", COLOR_TITLE, curses.A_BOLD)
+    row += 1
+    add_binding(row, "j/k", "Move   r Refresh   Esc Back", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "c/u", "Claim / Release   i/o/t In / Out / Toggle", COLOR_PROMPT)
+
+    row += 2
+    add_binding(row, "Theme", "cyberpunk|classic (ENV: CODIGNITY_TUI_THEME)", COLOR_DIM)
+
+    footer = "Esc: Close"
+    add_line(y + inner_h - 1, footer, COLOR_KEY_HINT)
+
+
 def draw_load_wizard(win: curses.window, state: AppState) -> None:
     """Draw the load firmware wizard."""
     y, x, inner_h, inner_w = draw_wizard_frame(win, "Load Codignity", 12, 50)
 
     try:
         # Status message
-        win.addstr(y + 1, x, state.load_status[:inner_w])
+        win.addstr(y + 1, x, state.load_status[:inner_w].ljust(inner_w), curses.color_pair(COLOR_PANEL))
 
         # Progress bar (if loading)
         if state.load_running or state.load_progress > 0:
@@ -1286,10 +1402,25 @@ def draw_load_wizard(win: curses.window, state: AppState) -> None:
             state.load_persist.draw(win, y + 5, x)
 
             # Instructions
-            win.addstr(y + 7, x, "Press Enter to start loading", curses.A_DIM)
-            win.addstr(y + 8, x, "Press Escape to cancel", curses.A_DIM)
+            win.addstr(
+                y + 7,
+                x,
+                "Press Enter to start loading".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
+            win.addstr(
+                y + 8,
+                x,
+                "Press Escape to cancel".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
         else:
-            win.addstr(y + 7, x, "Loading in progress...", curses.A_DIM)
+            win.addstr(
+                y + 7,
+                x,
+                "Loading in progress...".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
     except curses.error:
         pass
@@ -1301,23 +1432,48 @@ def draw_snapshot_wizard(win: curses.window, state: AppState) -> None:
 
     try:
         # Filename
-        win.addstr(y + 1, x, "Filename:")
-        win.addstr(y + 2, x, state.snapshot_filename[:inner_w], curses.A_UNDERLINE)
+        win.addstr(y + 1, x, "Filename:".ljust(inner_w), curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
+        win.addstr(
+            y + 2,
+            x,
+            state.snapshot_filename[:inner_w].ljust(inner_w),
+            curses.color_pair(COLOR_PROMPT) | curses.A_UNDERLINE,
+        )
 
         # Node info
         if state.node_id:
-            win.addstr(y + 4, x, f"Node: {state.node_id} ({state.role or 'unknown'})")
+            win.addstr(
+                y + 4,
+                x,
+                f"Node: {state.node_id} ({state.role or 'unknown'})"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_PANEL),
+            )
 
         # Safe-save checkbox
         state.snapshot_safe_save.draw(win, y + 6, x)
 
         # Status
         if state.snapshot_status:
-            win.addstr(y + 8, x, state.snapshot_status[:inner_w])
+            win.addstr(
+                y + 8,
+                x,
+                state.snapshot_status[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_PANEL),
+            )
 
         # Instructions
-        win.addstr(y + 10, x, "Press Enter to create snapshot", curses.A_DIM)
-        win.addstr(y + 11, x, "Press Escape to cancel", curses.A_DIM)
+        win.addstr(
+            y + 10,
+            x,
+            "Press Enter to create snapshot".ljust(inner_w),
+            curses.color_pair(COLOR_DIM) | curses.A_DIM,
+        )
+        win.addstr(
+            y + 11,
+            x,
+            "Press Escape to cancel".ljust(inner_w),
+            curses.color_pair(COLOR_DIM) | curses.A_DIM,
+        )
 
     except curses.error:
         pass
@@ -1334,20 +1490,40 @@ def draw_restore_wizard(win: curses.window, state: AppState) -> None:
             path_display = state.restore_snapshot_path
             if len(path_display) > inner_w:
                 path_display = "..." + path_display[-(inner_w - 3):]
-            win.addstr(y + 1, x, path_display, curses.A_DIM)
+            win.addstr(
+                y + 1,
+                x,
+                path_display[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
             # Preview info
             for i, line in enumerate(state.restore_preview[:10]):
                 if y + 3 + i < y + inner_h - 4:
-                    win.addstr(y + 3 + i, x, line[:inner_w])
+                    win.addstr(
+                        y + 3 + i,
+                        x,
+                        line[:inner_w].ljust(inner_w),
+                        curses.color_pair(COLOR_PANEL),
+                    )
 
             # Progress bar (if restoring)
             if state.restore_running:
                 draw_progress_bar(win, y + inner_h - 4, x, inner_w, state.restore_progress)
-                win.addstr(y + inner_h - 3, x, state.restore_status[:inner_w])
+                win.addstr(
+                    y + inner_h - 3,
+                    x,
+                    state.restore_status[:inner_w].ljust(inner_w),
+                    curses.color_pair(COLOR_PANEL),
+                )
             else:
                 # Instructions
-                win.addstr(y + inner_h - 3, x, "Press Enter to restore, Escape to go back", curses.A_DIM)
+                win.addstr(
+                    y + inner_h - 3,
+                    x,
+                    "Press Enter to restore, Escape to go back"[:inner_w].ljust(inner_w),
+                    curses.color_pair(COLOR_DIM) | curses.A_DIM,
+                )
 
         except curses.error:
             pass
@@ -1356,12 +1532,22 @@ def draw_restore_wizard(win: curses.window, state: AppState) -> None:
         y, x, inner_h, inner_w = draw_wizard_frame(win, "Select Snapshot", 16, 55)
 
         try:
-            win.addstr(y + 1, x, "Select a .cdsnap file:", curses.A_DIM)
+            win.addstr(
+                y + 1,
+                x,
+                "Select a .cdsnap file:".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
             if state.restore_file_browser:
                 state.restore_file_browser.draw(win, y + 3, x, inner_h - 5, inner_w)
 
-            win.addstr(y + inner_h - 2, x, "Enter: Select, Escape: Cancel", curses.A_DIM)
+            win.addstr(
+                y + inner_h - 2,
+                x,
+                "Enter: Select, Escape: Cancel".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
         except curses.error:
             pass
@@ -1379,11 +1565,21 @@ def draw_pins(win: curses.window, state: AppState) -> None:
 
     try:
         if state.pins_loading:
-            win.addstr(y + 1, x, "Loading pin data...", curses.A_DIM)
+            win.addstr(
+                y + 1,
+                x,
+                "Loading pin data...".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
             return
 
         if not state.pins_data:
-            win.addstr(y + 1, x, "No pin data. Press 'r' to refresh.", curses.A_DIM)
+            win.addstr(
+                y + 1,
+                x,
+                "No pin data. Press 'r' to refresh.".ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
             return
 
         # Get board manifest for footprint view
@@ -1402,11 +1598,17 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             right_pins = board.right_column()
             max_rows = max(len(left_pins), len(right_pins))
 
-            win.addstr(y + 1, x, f"{board.display_name}", curses.A_BOLD)
-            win.addstr(y + 2, x, "=" * min(inner_w, 50))
+            win.addstr(
+                y + 1,
+                x,
+                board.display_name[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+            )
+            win.hline(y + 2, x, curses.ACS_HLINE, min(inner_w, 50), curses.color_pair(COLOR_BORDER))
 
             col1_x = x
             col2_x = x + 26  # Space for left column
+            cell_w = 24
 
             for i in range(min(max_rows, inner_h - 6)):
                 row_y = y + 4 + i
@@ -1415,20 +1617,55 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 if i < len(left_pins):
                     pin_def = left_pins[i]
                     cell = _format_pin_cell_tui(pin_def, state.pins_data, selected_gpio)
-                    attr = curses.A_REVERSE if pin_def.gpio == selected_gpio else 0
-                    win.addstr(row_y, col1_x, cell[:24], attr)
+                    cell_attr = curses.color_pair(COLOR_PANEL)
+                    if pin_def.gpio is not None:
+                        ps = state.pins_data.get(pin_def.gpio)
+                        if ps:
+                            if ps.is_flash():
+                                cell_attr = curses.color_pair(COLOR_ERROR)
+                            elif ps.is_strapping():
+                                cell_attr = curses.color_pair(COLOR_WARNING)
+                            elif ps.is_safe():
+                                cell_attr = curses.color_pair(COLOR_SUCCESS)
+                    else:
+                        cell_attr = curses.color_pair(COLOR_DIM)
+
+                    if pin_def.gpio == selected_gpio:
+                        cell_attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
+
+                    win.addstr(row_y, col1_x, cell[:cell_w].ljust(cell_w), cell_attr)
 
                 # Right column
                 if i < len(right_pins):
                     pin_def = right_pins[i]
                     cell = _format_pin_cell_tui(pin_def, state.pins_data, selected_gpio)
-                    attr = curses.A_REVERSE if pin_def.gpio == selected_gpio else 0
-                    if col2_x + 24 < x + inner_w:
-                        win.addstr(row_y, col2_x, cell[:24], attr)
+                    cell_attr = curses.color_pair(COLOR_PANEL)
+                    if pin_def.gpio is not None:
+                        ps = state.pins_data.get(pin_def.gpio)
+                        if ps:
+                            if ps.is_flash():
+                                cell_attr = curses.color_pair(COLOR_ERROR)
+                            elif ps.is_strapping():
+                                cell_attr = curses.color_pair(COLOR_WARNING)
+                            elif ps.is_safe():
+                                cell_attr = curses.color_pair(COLOR_SUCCESS)
+                    else:
+                        cell_attr = curses.color_pair(COLOR_DIM)
+
+                    if pin_def.gpio == selected_gpio:
+                        cell_attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
+
+                    if col2_x + cell_w < x + inner_w:
+                        win.addstr(row_y, col2_x, cell[:cell_w].ljust(cell_w), cell_attr)
 
         else:
             # Simple list view (no board manifest)
-            win.addstr(y + 1, x, f"Board: {state.pins_board_id or 'unknown'}", curses.A_BOLD)
+            win.addstr(
+                y + 1,
+                x,
+                f"Board: {state.pins_board_id or 'unknown'}"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+            )
 
             list_start = y + 3
             visible_count = inner_h - 5
@@ -1442,25 +1679,50 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 else:
                     line = f"GPIO{gpio:02d}: ?"
 
-                attr = curses.A_REVERSE if gpio == selected_gpio else 0
-                win.addstr(list_start + i, x, line[:inner_w], attr)
+                if gpio == selected_gpio:
+                    attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
+                elif state_data and state_data.is_dangerous():
+                    attr = curses.color_pair(COLOR_WARNING)
+                else:
+                    attr = curses.color_pair(COLOR_PANEL)
+                win.addstr(list_start + i, x, line[:inner_w].ljust(inner_w), attr)
 
         # Pin details box
         if selected_gpio is not None and selected_gpio in state.pins_data:
             pin_state = state.pins_data[selected_gpio]
             detail_y = y + inner_h - 5
-            win.addstr(detail_y, x, "─" * min(inner_w, 50))
-            win.addstr(detail_y + 1, x, f"GPIO {selected_gpio}:", curses.A_BOLD)
+            win.hline(detail_y, x, curses.ACS_HLINE, min(inner_w, 50), curses.color_pair(COLOR_BORDER))
+            win.addstr(
+                detail_y + 1,
+                x,
+                f"GPIO {selected_gpio}:"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+            )
 
             level = pin_state.level if pin_state.level is not None else "-"
             owner = pin_state.owner or "-"
             flags = ",".join(pin_state.flags) if pin_state.flags else "-"
 
-            win.addstr(detail_y + 2, x, f"Mode: {pin_state.mode}  Level: {level}  Pull: {pin_state.pull}")
-            win.addstr(detail_y + 3, x, f"Owner: {owner}  Flags: {flags}")
+            win.addstr(
+                detail_y + 2,
+                x,
+                f"Mode: {pin_state.mode}  Level: {level}  Pull: {pin_state.pull}"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_PANEL),
+            )
+            win.addstr(
+                detail_y + 3,
+                x,
+                f"Owner: {owner}  Flags: {flags}"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_PANEL),
+            )
 
         # Instructions
-        win.addstr(y + inner_h - 1, x, "j/k:Move  r:Refresh  Esc:Back", curses.A_DIM)
+        win.addstr(
+            y + inner_h - 1,
+            x,
+            "j/k Move   r Refresh   Esc Back".ljust(inner_w),
+            curses.color_pair(COLOR_DIM) | curses.A_DIM,
+        )
 
     except curses.error:
         pass
@@ -1502,13 +1764,15 @@ def draw_screen(win: curses.window, state: AppState) -> None:
         banner_end = draw_banner(win)
         log_y = banner_end + 1
         log_height = height - banner_end - 3  # Leave room for status and hints
-        state.log.draw(win, log_y, 0, max(0, log_height), width)
+        state.log.draw(win, log_y, 0, max(0, log_height), max(0, width - 1))
     else:
         now = time.strftime("%H:%M:%S")
         port_label = state.port or "(auto)"
 
-        right = f"{now}  {port_label}"
-        draw_chrome_line(win, 0, " CODIGNITY // CONTROL ", right, attr=curses.A_BOLD)
+        link = "ON" if state.connected else "OFF"
+        node = state.node_id or "—"
+        right = f"{now}  {port_label}  LINK:{link}"
+        draw_chrome_line(win, 0, " CODIGNITY :: CONTROL DECK ", right, attr=curses.A_BOLD)
 
         banner_lines = draw_banner(win, y=1)
         info_y = 1 + banner_lines
@@ -1533,12 +1797,12 @@ def draw_screen(win: curses.window, state: AppState) -> None:
             if width < sidebar_min + gap + 30:
                 # Not enough width for a sidebar.
                 log_y, log_x, log_h, log_w = draw_frame(
-                    win, body_y, 0, body_h, width, "LOG / TELEMETRY", fill=False
+                    win, body_y, 0, body_h, width, "LOG / TELEMETRY", fill=True
                 )
                 state.log.draw(win, log_y, log_x, log_h, log_w)
             else:
                 sys_y, sys_x, sys_h, sys_w = draw_frame(
-                    win, body_y, 0, body_h, sidebar_w, "SYSTEM", fill=False
+                    win, body_y, 0, body_h, sidebar_w, "SYSTEM", fill=True
                 )
                 log_y, log_x, log_h, log_w = draw_frame(
                     win,
@@ -1547,63 +1811,65 @@ def draw_screen(win: curses.window, state: AppState) -> None:
                     body_h,
                     width - (sidebar_w + gap),
                     "LOG / TELEMETRY",
-                    fill=False,
+                    fill=True,
                 )
 
                 # SYSTEM panel contents
                 connected = state.connected
-                link = "CONNECTED" if connected else "DISCONNECTED"
+                dot = "●" if connected else "○"
+                link_label = "CONNECTED" if connected else "DISCONNECTED"
 
-                lines: list[tuple[str, int | None]] = [
-                    (f"Link: {link}", COLOR_SUCCESS if connected else COLOR_ERROR),
-                    (f"Port: {port_label}", None),
-                    (f"Mode: {mode}", None),
-                    (f"Node: {node}", None),
-                    (f"Role: {role}", None),
-                    (f"Ver:  {ver}", None),
+                lines: list[tuple[str, int, int]] = [
+                    (f"LINK: {dot} {link_label}", COLOR_SUCCESS if connected else COLOR_ERROR, curses.A_BOLD),
+                    (f"PORT: {port_label}", COLOR_DIM, curses.A_DIM),
+                    (f"MODE: {mode.upper()}", COLOR_PANEL, 0),
+                    (f"NODE: {node}", COLOR_PANEL, 0),
+                    (f"ROLE: {role}", COLOR_PANEL, 0),
+                    (f"VER:  {ver}", COLOR_PANEL, 0),
                 ]
                 if state.mcu:
-                    lines.append((f"MCU:  {state.mcu}", None))
+                    lines.append((f"MCU:  {state.mcu}", COLOR_PANEL, 0))
                 if state.units:
-                    lines.append((f"Units:{state.units}", None))
+                    lines.append((f"UNITS:{state.units}", COLOR_PANEL, 0))
                 if state.pins:
-                    lines.append((f"Pins: {state.pins}", None))
+                    lines.append((f"PINS: {state.pins}", COLOR_PANEL, 0))
                 if state.children is not None:
-                    lines.append((f"Kids: {state.children}", None))
+                    lines.append((f"KIDS: {state.children}", COLOR_PANEL, 0))
                 if state.fifo_size is not None:
-                    lines.append((f"FIFO: {state.fifo_size}", None))
+                    lines.append((f"FIFO: {state.fifo_size}", COLOR_PANEL, 0))
                 if state.last_error:
-                    lines.append(("", None))
-                    lines.append(("Last error:", COLOR_ERROR))
-                    lines.append((state.last_error, COLOR_ERROR))
+                    lines.append(("", COLOR_PANEL, 0))
+                    lines.append(("LAST ERROR", COLOR_ERROR, curses.A_BOLD))
+                    lines.append((state.last_error, COLOR_ERROR, 0))
 
-                lines.append(("", None))
-                lines.append(("ACTIONS", None))
+                lines.append(("", COLOR_PANEL, 0))
+                lines.append(("ACTIONS", COLOR_TITLE, curses.A_BOLD))
                 lines.extend(
                     [
-                        ("p  Probe/connect", None),
-                        ("m  Meta refresh", None),
-                        ("h  History", None),
-                        ("l  Load firmware", None),
-                        ("c  Snapshot", None),
-                        ("r  Restore", None),
-                        ("Enter  Command", None),
-                        ("Tab  Menu", None),
-                        ("q  Quit", None),
-                        ("PgUp/PgDn  Scroll", None),
+                        (" p   Probe / connect", COLOR_PANEL, 0),
+                        (" g   Pins inspector", COLOR_PANEL, 0),
+                        (" m   Meta refresh", COLOR_PANEL, 0),
+                        (" h   History", COLOR_PANEL, 0),
+                        (" s   Source", COLOR_PANEL, 0),
+                        (" v   Validate", COLOR_PANEL, 0),
+                        (" l   Load firmware", COLOR_PANEL, 0),
+                        (" c   Snapshot", COLOR_PANEL, 0),
+                        (" r   Restore", COLOR_PANEL, 0),
+                        (" Enter  Send command", COLOR_PANEL, 0),
+                        (" Tab    Menu", COLOR_PANEL, 0),
+                        (" ?      Help", COLOR_PANEL, 0),
+                        (" PgUp/PgDn  Scroll log", COLOR_PANEL, 0),
+                        (" q      Quit", COLOR_PANEL, 0),
                     ]
                 )
 
                 try:
                     row = sys_y
-                    for text, color in lines:
+                    for text, color, extra in lines:
                         if row >= sys_y + sys_h:
                             break
                         clipped = text[:sys_w].ljust(sys_w)
-                        if color is None:
-                            win.addstr(row, sys_x, clipped)
-                        else:
-                            win.addstr(row, sys_x, clipped, curses.color_pair(color))
+                        win.addstr(row, sys_x, clipped, curses.color_pair(color) | extra)
                         row += 1
                 except curses.error:
                     pass
@@ -1638,6 +1904,8 @@ def draw_screen(win: curses.window, state: AppState) -> None:
         )
     elif state.screen == Screen.MESSAGE:
         draw_message(win, state.message, state.message_is_error)
+    elif state.screen == Screen.HELP:
+        draw_help(win, state)
     elif state.screen == Screen.LOAD_WIZARD:
         draw_load_wizard(win, state)
     elif state.screen == Screen.SNAPSHOT_WIZARD:
@@ -1650,7 +1918,7 @@ def draw_screen(win: curses.window, state: AppState) -> None:
     win.refresh()
 
 
-def run_tui(port: str | None = None) -> int:
+def run_tui(port: str | None = None, theme: str | None = None) -> int:
     """Run the TUI application.
 
     Args:
@@ -1662,11 +1930,19 @@ def run_tui(port: str | None = None) -> int:
 
     def main(stdscr: curses.window) -> int:
         # Setup
-        curses.curs_set(0)  # Hide cursor
+        try:
+            curses.curs_set(0)  # Hide cursor
+        except curses.error:
+            pass
         stdscr.nodelay(True)  # Non-blocking input
         stdscr.timeout(100)  # 100ms timeout for getch
 
-        init_colors()
+        has_colors = init_colors(theme)
+        if has_colors:
+            try:
+                stdscr.bkgd(" ", curses.color_pair(COLOR_PANEL))
+            except curses.error:
+                pass
 
         state = AppState()
         if port:
