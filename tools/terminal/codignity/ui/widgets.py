@@ -18,10 +18,16 @@ from .theme import (
     COLOR_STATUS,
     COLOR_ERROR,
     COLOR_SUCCESS,
+    COLOR_PROMPT,
     COLOR_KEY_HINT,
     COLOR_MENU_SELECTED,
     COLOR_CHROME,
+    COLOR_DIM,
+    COLOR_TITLE,
+    COLOR_BORDER,
+    COLOR_PANEL,
     BANNER_LINES,
+    TAGLINE_LINES,
 )
 
 def draw_chrome_line(
@@ -61,9 +67,11 @@ def draw_frame(
     width: int,
     title: str = "",
     *,
-    border_pair: int = COLOR_BANNER,
-    title_pair: int = COLOR_CHROME,
+    border_pair: int = COLOR_BORDER,
+    title_pair: int = COLOR_TITLE,
     fill: bool = False,
+    fill_pair: int = COLOR_PANEL,
+    shadow: bool = False,
 ) -> tuple[int, int, int, int]:
     """Draw a bordered frame and return inner rect (y, x, h, w)."""
     screen_h, screen_w = win.getmaxyx()
@@ -75,8 +83,24 @@ def draw_frame(
 
     border_attr = curses.color_pair(border_pair)
     title_attr = curses.color_pair(title_pair) | curses.A_BOLD
+    fill_attr = curses.color_pair(fill_pair)
 
     try:
+        if shadow:
+            shadow_attr = curses.color_pair(COLOR_DIM) | curses.A_DIM
+            shadow_y = y + height
+            shadow_x = x + width
+
+            if shadow_y < screen_h:
+                shadow_w = min(width, max(0, usable_w - (x + 1)))
+                if shadow_w > 0:
+                    win.hline(shadow_y, x + 1, " ", shadow_w, shadow_attr)
+
+            if shadow_x < usable_w:
+                shadow_h = min(height, max(0, screen_h - (y + 1)))
+                if shadow_h > 0:
+                    win.vline(y + 1, shadow_x, " ", shadow_h, shadow_attr)
+
         # Border lines
         win.hline(y, x, curses.ACS_HLINE, width, border_attr)
         win.hline(y + height - 1, x, curses.ACS_HLINE, width, border_attr)
@@ -92,7 +116,7 @@ def draw_frame(
         if fill and height > 2 and width > 2:
             blank = " " * (width - 2)
             for row in range(y + 1, y + height - 1):
-                win.addstr(row, x + 1, blank)
+                win.addstr(row, x + 1, blank, fill_attr)
 
         if title:
             label = f" {title} "
@@ -110,17 +134,32 @@ def draw_banner(win: curses.window, y: int = 0, x: int = 0) -> int:
     """Draw the ASCII banner. Returns number of lines drawn."""
     height, width = win.getmaxyx()
 
-    for i, line in enumerate(BANNER_LINES):
-        if y + i >= height - 1:
-            break
-        # Center the banner
+    usable_width = max(0, width - 1)
+    drawn = 0
+
+    def _draw_line(line: str, attr: int) -> None:
+        nonlocal drawn
+        row = y + drawn
+        if row >= height - 1:
+            return
+
         start_x = max(0, (width - len(line)) // 2)
         try:
-            win.addstr(y + i, start_x, line[:width - start_x], curses.color_pair(COLOR_BANNER))
+            # Lay down a header "slab" so the banner sits on chrome.
+            if usable_width > 0:
+                win.addstr(row, 0, " " * usable_width, curses.color_pair(COLOR_CHROME))
+            max_len = max(0, usable_width - start_x)
+            win.addstr(row, start_x, line[:max_len], attr)
+            drawn += 1
         except curses.error:
             pass
 
-    return len(BANNER_LINES)
+    for line in BANNER_LINES:
+        _draw_line(line, curses.color_pair(COLOR_BANNER) | curses.A_BOLD)
+    for line in TAGLINE_LINES:
+        _draw_line(line, curses.color_pair(COLOR_CHROME) | curses.A_DIM)
+
+    return drawn
 
 
 def draw_status_bar(
@@ -163,7 +202,9 @@ def draw_key_hints(win: curses.window, hints: str) -> None:
     y = height - 1
 
     try:
-        win.addstr(y, 0, hints[:width - 1], curses.color_pair(COLOR_KEY_HINT))
+        usable_width = max(0, width - 1)
+        win.addstr(y, 0, " " * usable_width, curses.color_pair(COLOR_KEY_HINT))
+        win.addstr(y, 0, hints[:usable_width], curses.color_pair(COLOR_KEY_HINT))
     except curses.error:
         pass
 
@@ -178,16 +219,32 @@ class LogPane:
 
     def append(self, text: str, color_pair: int = 0) -> None:
         """Append a line to the log."""
-        for line in text.split("\n"):
+        if text == "":
+            return
+
+        was_scrolled = self.scroll_offset > 0
+        new_lines = text.split("\n")
+        for line in new_lines:
             self.lines.append((line, color_pair))
 
         # Trim if too many lines
         if len(self.lines) > self.max_lines:
-            self.lines = self.lines[-self.max_lines :]
-            self.scroll_offset = max(0, self.scroll_offset - (len(self.lines) - self.max_lines))
+            removed = len(self.lines) - self.max_lines
+            self.lines = self.lines[removed:]
 
-        # Auto-scroll to bottom
-        self.scroll_to_bottom()
+            # Clamp scroll after retention kicks in.
+            max_offset = max(0, len(self.lines) - 1)
+            self.scroll_offset = min(self.scroll_offset, max_offset)
+
+        if was_scrolled:
+            # Keep the currently-visible content stable when new log lines arrive.
+            self.scroll_offset = min(
+                self.scroll_offset + len(new_lines),
+                max(0, len(self.lines) - 1),
+            )
+        else:
+            # Auto-scroll to bottom if the user hasn't scrolled up.
+            self.scroll_to_bottom()
 
     def scroll_to_bottom(self) -> None:
         """Scroll to show the most recent lines."""
@@ -223,7 +280,20 @@ class LogPane:
             # Truncate line to fit
             display_line = line[:width]
             try:
-                win.addstr(row, x, display_line, curses.color_pair(color))
+                if color:
+                    attr = curses.color_pair(color)
+                else:
+                    # Auto-highlight common protocol shapes.
+                    if display_line.startswith("#"):
+                        attr = curses.color_pair(COLOR_ERROR)
+                    elif display_line.startswith("> "):
+                        attr = curses.color_pair(COLOR_PROMPT)
+                    elif display_line.startswith("! "):
+                        attr = curses.color_pair(COLOR_DIM)
+                    else:
+                        attr = curses.color_pair(COLOR_PANEL)
+
+                win.addstr(row, x, display_line.ljust(width), attr)
             except curses.error:
                 pass
 
@@ -296,9 +366,11 @@ class Menu:
             menu_height,
             menu_width,
             self.title,
-            border_pair=COLOR_CHROME,
-            title_pair=COLOR_CHROME,
+            border_pair=COLOR_BORDER,
+            title_pair=COLOR_TITLE,
             fill=True,
+            fill_pair=COLOR_PANEL,
+            shadow=True,
         )
         if inner_h <= 0 or inner_w <= 0:
             return
@@ -319,11 +391,11 @@ class Menu:
                 text = text[:content_w].ljust(content_w)
 
                 if not item.enabled:
-                    attr = curses.A_DIM
+                    attr = curses.color_pair(COLOR_DIM) | curses.A_DIM
                 elif i == self.selected:
                     attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
                 else:
-                    attr = 0
+                    attr = curses.color_pair(COLOR_PANEL)
 
                 win.addstr(row, content_x, text, attr)
 
@@ -361,16 +433,18 @@ def draw_confirm_dialog(
             dialog_height,
             dialog_width,
             "Confirm",
-            border_pair=COLOR_CHROME,
-            title_pair=COLOR_CHROME,
+            border_pair=COLOR_BORDER,
+            title_pair=COLOR_TITLE,
             fill=True,
+            fill_pair=COLOR_PANEL,
+            shadow=True,
         )
         if inner_h <= 0 or inner_w <= 0:
             return
 
         msg = message[:inner_w]
         msg_x = inner_x + max(0, (inner_w - len(msg)) // 2)
-        win.addstr(inner_y + 1, msg_x, msg)
+        win.addstr(inner_y + 1, msg_x, msg, curses.color_pair(COLOR_PANEL))
 
         btn = buttons[:inner_w]
         btn_x = inner_x + max(0, (inner_w - len(btn)) // 2)
@@ -404,15 +478,22 @@ def draw_input_dialog(
             dialog_height,
             dialog_width,
             "Command",
-            border_pair=COLOR_CHROME,
-            title_pair=COLOR_CHROME,
+            border_pair=COLOR_BORDER,
+            title_pair=COLOR_TITLE,
             fill=True,
+            fill_pair=COLOR_PANEL,
+            shadow=True,
         )
         if inner_h <= 0 or inner_w <= 0:
             return
 
         # Prompt
-        win.addstr(inner_y + 1, inner_x + 1, prompt[: max(0, inner_w - 2)])
+        win.addstr(
+            inner_y + 1,
+            inner_x + 1,
+            prompt[: max(0, inner_w - 2)],
+            curses.color_pair(COLOR_PANEL),
+        )
 
         # Input field
         input_y = inner_y + 2
@@ -421,12 +502,22 @@ def draw_input_dialog(
 
         # Draw input value
         display_value = value[:input_width]
-        win.addstr(input_y, input_x, display_value, curses.A_UNDERLINE)
+        win.addstr(
+            input_y,
+            input_x,
+            display_value,
+            curses.color_pair(COLOR_PROMPT) | curses.A_UNDERLINE,
+        )
 
         # Fill remaining space with underline
         remaining = input_width - len(display_value)
         if remaining > 0:
-            win.addstr(input_y, input_x + len(display_value), " " * remaining, curses.A_UNDERLINE)
+            win.addstr(
+                input_y,
+                input_x + len(display_value),
+                " " * remaining,
+                curses.color_pair(COLOR_PROMPT) | curses.A_UNDERLINE,
+            )
 
         # Position cursor
         curses.curs_set(1)
@@ -482,9 +573,14 @@ def draw_progress_bar(
 
     try:
         win.addstr(y, x, bar, curses.color_pair(COLOR_SUCCESS))
-        win.addstr(y, x + len(bar), pct)
+        win.addstr(y, x + len(bar), pct, curses.color_pair(COLOR_PANEL))
         if label:
-            win.addstr(y, x + len(bar) + len(pct) + 1, label)
+            win.addstr(
+                y,
+                x + len(bar) + len(pct) + 1,
+                label,
+                curses.color_pair(COLOR_PANEL),
+            )
     except curses.error:
         pass
 
@@ -504,7 +600,8 @@ class Checkbox:
         """Draw the checkbox."""
         check_char = "x" if self.checked else " "
         text = f"[{check_char}] {self.label}"
-        attr = curses.A_REVERSE if selected else 0
+        base = curses.color_pair(COLOR_SUCCESS if self.checked else COLOR_PANEL)
+        attr = base | (curses.A_REVERSE if selected else 0)
         try:
             win.addstr(y, x, text, attr)
         except curses.error:
@@ -594,7 +691,12 @@ class FileBrowser:
         if len(path_display) > width:
             path_display = "..." + path_display[-(width - 3):]
         try:
-            win.addstr(y, x, path_display, curses.A_DIM)
+            win.addstr(
+                y,
+                x,
+                path_display.ljust(width),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
         except curses.error:
             pass
 
@@ -602,7 +704,12 @@ class FileBrowser:
         visible_height = height - 1  # Account for path line
         if not self.files:
             try:
-                win.addstr(y + 1, x, "(no files)", curses.A_DIM)
+                win.addstr(
+                    y + 1,
+                    x,
+                    "(no files)".ljust(width),
+                    curses.color_pair(COLOR_DIM) | curses.A_DIM,
+                )
             except curses.error:
                 pass
             return
@@ -615,7 +722,10 @@ class FileBrowser:
         for i, idx in enumerate(range(start_idx, min(start_idx + visible_height, len(self.files)))):
             name = self.files[idx]
             row = y + 1 + i
-            attr = curses.A_REVERSE if idx == self.selected else 0
+            if idx == self.selected:
+                attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
+            else:
+                attr = curses.color_pair(COLOR_PANEL)
 
             # Indicate directories
             if name.endswith("/"):
@@ -648,9 +758,11 @@ def draw_wizard_frame(
         height,
         width,
         title,
-        border_pair=COLOR_CHROME,
-        title_pair=COLOR_CHROME,
+        border_pair=COLOR_BORDER,
+        title_pair=COLOR_TITLE,
         fill=True,
+        fill_pair=COLOR_PANEL,
+        shadow=True,
     )
 
     # Additional padding for wizard content.
