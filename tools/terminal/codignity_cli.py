@@ -947,7 +947,7 @@ def render_pin_footprint(
         lines.append(f"  {left_str}    {right_str}")
 
     lines.append("")
-    lines.append("  Legend: [L]=level [M]=mode [O]=owner [!]=warning")
+    lines.append("  Legend: [L]=level [M]=mode [O]=owner  X=flash  !=strapping  I=input-only  S=safe")
     return "\n".join(lines)
 
 
@@ -1002,10 +1002,14 @@ def _format_pin_cell(
 
     # Warning flags
     warn = ""
-    if state.is_strapping():
-        warn = "!"
-    elif state.is_flash():
+    if state.is_flash():
         warn = "X"
+    elif state.is_strapping():
+        warn = "!"
+    elif state.is_input_only():
+        warn = "I"
+    elif state.is_safe():
+        warn = "S"
 
     return f"{marker}{label} G{gpio:02d} L{level_str} M{mode_abbr} O{owner.ljust(6)}{warn}"
 
@@ -1243,6 +1247,163 @@ def cmd_pin_read(args: argparse.Namespace) -> int:
 
     except SerialError as e:
         print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_pin_trace(args: argparse.Namespace) -> int:
+    """Handle the `pin trace` subcommand.
+
+    Captures a time series by repeatedly calling `pin-read` and storing samples
+    on the host (not the MCU).
+    """
+    try:
+        seconds = float(args.seconds)
+        hz = float(args.hz)
+    except (TypeError, ValueError):
+        print("Error: seconds and hz must be numeric", file=sys.stderr)
+        return 1
+
+    if seconds <= 0:
+        print("Error: seconds must be > 0", file=sys.stderr)
+        return 1
+    if hz <= 0:
+        print("Error: hz must be > 0", file=sys.stderr)
+        return 1
+
+    interval_s = 1.0 / hz
+
+    # Resolve output path
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        repo_root = _this_dir.parent.parent
+        out_dir = repo_root / ".codignity" / "traces"
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        pin_label = str(args.pin).replace("/", "_")
+        out_path = out_dir / f"pin-{pin_label}-{stamp}.csv"
+
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: Could not create output directory: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                # Optional one-shot pin config before capture.
+                if args.mode or args.pull:
+                    mode = args.mode or "in"
+                    cmd = f"pin-mode {args.pin} {mode}"
+                    if args.pull:
+                        cmd += f" pull={args.pull}"
+                    transcript.record_sent(cmd)
+                    response = session.send_protocol(cmd, timeout_s=args.timeout)
+                    transcript.record_received(response)
+                    has_error, error_msg = is_error(response)
+                    if has_error:
+                        print(f"Error: {error_msg}", file=sys.stderr)
+                        return 1
+
+                # Validate pin + get canonical gpio number.
+                cmd = f"pin-status {args.pin}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=args.timeout)
+                transcript.record_received(response)
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                pin_state = None
+                for line in response.splitlines():
+                    state = parse_pin_kv(line.strip())
+                    if state:
+                        pin_state = state
+                        break
+
+                if pin_state is None:
+                    print("Error: Could not parse pin-status response", file=sys.stderr)
+                    return 1
+                if pin_state.is_flash():
+                    print("Error: Pin is marked as flash; refusing to sample.", file=sys.stderr)
+                    return 1
+
+                # Capture loop
+                transcript.record_comment(
+                    f"Tracing pin {args.pin} for {seconds}s at target {hz}Hz -> {out_path}"
+                )
+                print(f"Tracing {args.pin} for {seconds}s at {hz}Hz")
+                print(f"Writing {out_path}")
+
+                start = time.perf_counter()
+                deadline = start + seconds
+                next_tick = start
+                last_report = start
+
+                samples: list[tuple[float, int]] = []
+
+                while True:
+                    now = time.perf_counter()
+                    if now >= deadline:
+                        break
+
+                    if now < next_tick:
+                        time.sleep(min(0.01, next_tick - now))
+                        continue
+
+                    resp = session.send_protocol(f"pin-read {args.pin}", timeout_s=args.timeout)
+                    value = parse_pin_value_response(resp)
+                    if value is None:
+                        # Represent parse failures as -1.
+                        value = -1
+
+                    t_s = time.perf_counter() - start
+                    samples.append((t_s, int(value)))
+
+                    next_tick += interval_s
+                    if next_tick < now - interval_s:
+                        # If we fell behind, resync to avoid spiraling.
+                        next_tick = now + interval_s
+
+                    if not args.quiet and (now - last_report) >= 0.25:
+                        last_report = now
+                        pct = int(min(100.0, (now - start) * 100.0 / seconds))
+                        print(f"\r  [{pct:3d}%] {len(samples)} samples", end="", flush=True)
+
+                if not args.quiet:
+                    print(f"\r  [100%] {len(samples)} samples")
+
+                # Write CSV
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write("# Codignity pin trace\n")
+                    f.write(f"# port: {session.port}\n")
+                    f.write(f"# pin: {args.pin} (gpio {pin_state.gpio})\n")
+                    f.write(f"# seconds: {seconds}\n")
+                    f.write(f"# target_hz: {hz}\n")
+                    f.write("t_s,value\n")
+                    for t_s, v in samples:
+                        f.write(f"{t_s:.6f},{v}\n")
+
+                elapsed = max(1e-6, time.perf_counter() - start)
+                eff_hz = len(samples) / elapsed
+                print(f"Done: {len(samples)} samples in {elapsed:.2f}s ({eff_hz:.1f}Hz effective)")
+
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
         return 1
 
 
@@ -1487,6 +1648,44 @@ def main(argv: list[str] | None = None) -> int:
     add_common_args(p_pin_read)
     p_pin_read.add_argument("pin", help="Pin identifier")
     p_pin_read.set_defaults(func=cmd_pin_read)
+
+    # pin trace
+    p_pin_trace = pin_sub.add_parser("trace", help="Capture a host-side time series from pin-read")
+    add_common_args(p_pin_trace)
+    p_pin_trace.add_argument("pin", help="Pin identifier")
+    p_pin_trace.add_argument(
+        "--seconds",
+        type=float,
+        default=1.0,
+        help="Capture duration in seconds (default: 1.0).",
+    )
+    p_pin_trace.add_argument(
+        "--hz",
+        type=float,
+        default=50.0,
+        help="Target sample rate in Hz (best-effort; default: 50).",
+    )
+    p_pin_trace.add_argument(
+        "--out",
+        type=Path,
+        help="Output CSV path (default: .codignity/traces/pin-<pin>-<timestamp>.csv).",
+    )
+    p_pin_trace.add_argument(
+        "--mode",
+        choices=["in", "out"],
+        help="Optional pin mode to set before tracing.",
+    )
+    p_pin_trace.add_argument(
+        "--pull",
+        choices=["up", "down", "none"],
+        help="Optional pull resistor config (implies --mode in if --mode omitted).",
+    )
+    p_pin_trace.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress output.",
+    )
+    p_pin_trace.set_defaults(func=cmd_pin_trace)
 
     # pin write
     p_pin_write = pin_sub.add_parser("write", help="Write pin level")
