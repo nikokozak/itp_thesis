@@ -46,4 +46,5 @@ line-oriented UART protocol designed to be readable and maintainable “offline�
   Forth-2012 / ESP32forth docs.
 - ESP32forth reference: https://esp32forth.appspot.com/ESP32forth.html
 - ESP32forth/ueForth source: https://github.com/flagxor/ueforth
+- Local cached refs (gitignored, not committed): `.codignity/references/INDEX.txt` (see `.codignity/references/ESP32forth.txt`, `.codignity/references/ueforth_README.md`, etc.)
 - Document dialect gotchas here (or in `PROTOCOL_REFERENCE.md`) as soon as they’re discovered.
