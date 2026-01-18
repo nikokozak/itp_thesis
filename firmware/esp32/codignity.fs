@@ -32,6 +32,7 @@ variable cd-tick
 : cd-submod ( idx n mod -- idx' ) >r swap r@ + swap - r> mod ;
 : cd-adv ( a n -- a' n' ) 1- swap 1+ swap ;
 : cd-drop1 ( a n -- a' n' ) 1- swap 1+ swap ;
+: cd-/string ( a n u -- a' n' ) >r swap r@ + swap r> - ;
 : cd-space? ( c -- f ) dup bl = over 9 = or over 10 = or swap 13 = or ;
 : cd-skip-spaces ( a n -- a' n' )
   begin dup while over c@ cd-space? if cd-adv else exit then repeat ;
@@ -567,7 +568,7 @@ variable cd-parse-gpio-ok
       over 1+ c@ cd-to-upper [char] P = if
       over 2 + c@ cd-to-upper [char] I = if
       over 3 + c@ cd-to-upper [char] O = if
-        4 /string cd-parse-digits exit
+        4 cd-/string cd-parse-digits exit
       then then then
     then
     2drop 0 0 exit
@@ -589,17 +590,15 @@ variable cd-parse-gpio-ok
 
 \ Enum to mode token
 : cd-mode$ ( enum -- a n )
-  case
-    0 of s" unknown" endof
-    1 of s" in" endof
-    2 of s" out" endof
-    3 of s" adc" endof
-    4 of s" i2c" endof
-    5 of s" uart" endof
-    6 of s" pwm" endof
-    7 of s" reserved" endof
-    s" unknown" rot
-  endcase ;
+  dup 0 = if drop s" unknown" exit then
+  dup 1 = if drop s" in" exit then
+  dup 2 = if drop s" out" exit then
+  dup 3 = if drop s" adc" exit then
+  dup 4 = if drop s" i2c" exit then
+  dup 5 = if drop s" uart" exit then
+  dup 6 = if drop s" pwm" exit then
+  dup 7 = if drop s" reserved" exit then
+  drop s" unknown" ;
 
 \ Pull token to enum
 : cd-pull-token ( a n -- enum f )
@@ -610,12 +609,10 @@ variable cd-parse-gpio-ok
 
 \ Enum to pull token
 : cd-pull$ ( enum -- a n )
-  case
-    0 of s" none" endof
-    1 of s" up" endof
-    2 of s" down" endof
-    s" none" rot
-  endcase ;
+  dup 0 = if drop s" none" exit then
+  dup 1 = if drop s" up" exit then
+  dup 2 = if drop s" down" exit then
+  drop s" none" ;
 
 \ Flags to comma-separated token
 create cd-flags-buf 32 allot
