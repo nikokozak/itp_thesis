@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PY="${ROOT_DIR}/.venv/bin/python"
 TUI="${ROOT_DIR}/tools/terminal/codignity_tui.py"
 
+cd "${ROOT_DIR}"
+
 if [[ -x "${VENV_PY}" ]]; then
   exec "${VENV_PY}" "${TUI}" "$@"
 fi
@@ -18,4 +20,3 @@ echo "Error: python3 not found." >&2
 echo "Create the venv:" >&2
 echo "  python3 -m venv .venv && .venv/bin/python -m pip install -r tools/terminal/requirements.txt" >&2
 exit 1
-
