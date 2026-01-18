@@ -58,6 +58,27 @@ def autodetect_port() -> str:
     Raises:
         SerialError: If no ports or multiple ports are found.
     """
+    ports = list_candidate_ports()
+
+    if not ports:
+        raise SerialError(
+            "No serial ports detected.\n"
+            "Pass --port explicitly (e.g. /dev/cu.usbserial-0001)."
+        )
+    if len(ports) > 1:
+        raise SerialError(
+            "Multiple serial ports detected; pass --port explicitly:\n"
+            + "\n".join(f"- {p}" for p in ports)
+        )
+    return ports[0]
+
+
+def list_candidate_ports() -> list[str]:
+    """List likely USB serial ports.
+
+    Returns:
+        Sorted list of matching serial device paths.
+    """
     patterns = [
         "/dev/cu.usbserial-*",
         "/dev/tty.usbserial-*",
@@ -72,18 +93,7 @@ def autodetect_port() -> str:
     for pattern in patterns:
         ports.extend(glob.glob(pattern))
     ports = sorted(set(ports))
-
-    if not ports:
-        raise SerialError(
-            "No serial ports detected.\n"
-            "Pass --port explicitly (e.g. /dev/cu.usbserial-0001)."
-        )
-    if len(ports) > 1:
-        raise SerialError(
-            "Multiple serial ports detected; pass --port explicitly:\n"
-            + "\n".join(f"- {p}" for p in ports)
-        )
-    return ports[0]
+    return ports
 
 
 def _looks_fatal(buf: bytes) -> bool:
