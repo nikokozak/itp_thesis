@@ -727,7 +727,7 @@ variable cd-flags-len
   dup 0> if
     \ Expect "pull=xxx"
     2dup 5 min s" pull=" str= if
-      5 /string
+      5 cd-/string
       2dup s" up" str= if
         2drop gpio gpio_pullup_en drop 1 gpio cd-pin-pull!
       else
