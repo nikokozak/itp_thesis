@@ -464,18 +464,9 @@ def cmd_load(args: argparse.Namespace) -> int:
 
                 print(f"\r  [100%] {loaded} lines loaded.    ")
 
-                # Step 3: Enter protocol mode with revive
-                transcript.record_comment("Entering protocol mode...")
-                print("Entering protocol mode...")
-                session.drain(0.2)  # Clear any buffered output from firmware load
-                session.send_line("revive")
-                result = session.read_until(b" ok", args.timeout)
-                if not result.found:
-                    print("Warning: revive did not return ok", file=sys.stderr)
-
-                session.drain(0.3)
-
-                # Step 4: Validate
+                # Step 3: Validate (still in REPL after loading the file).
+                # Note: calling `revive` here would restore the previously saved image,
+                # discarding the newly loaded definitions.
                 transcript.record_comment("Validating...")
                 print("Validating...")
                 transcript.record_sent("validate")
@@ -493,7 +484,7 @@ def cmd_load(args: argparse.Namespace) -> int:
                     print(f"Unexpected validation response: {response}", file=sys.stderr)
                     return 1
 
-                # Step 5: Persist if requested
+                # Step 4: Persist if requested
                 if args.persist:
                     transcript.record_comment("Persisting with safe-save...")
                     print("Running safe-save...")
@@ -725,18 +716,9 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
 
                 print(f"\r  [100%] {loaded} lines loaded.    ")
 
-                # Step 3: Enter protocol mode
-                transcript.record_comment("Entering protocol mode...")
-                print("Entering protocol mode...")
-                session.drain(0.2)  # Clear any buffered output from firmware load
-                session.send_line("revive")
-                result = session.read_until(b" ok", args.timeout)
-                if not result.found:
-                    # Warn but continue - protocol commands will fail if not actually in protocol mode
-                    print("Warning: revive did not return ok", file=sys.stderr)
-                session.drain(0.3)
-
-                # Step 4: Apply meta set commands
+                # Step 3: Apply meta set commands (still in REPL after loading the file).
+                # Note: calling `revive` here would restore the previously saved image,
+                # discarding the newly loaded definitions.
                 if snapshot.meta:
                     transcript.record_comment("Applying meta settings...")
                     print(f"Applying {len(snapshot.meta)} meta settings...")
