@@ -1022,7 +1022,10 @@ variable cd-old-notfound
     ." SAFE: pressed; staying in REPL" cr
   else
     cd-node
-  then ;
+  then
+  \ If `cd-node` exits (e.g., via the `repl` protocol command), fall back to the
+  \ standard ESP32forth REPL loop.
+  quit ;
 
 : cd-ensure-autostart ( -- ) ['] cd-boot 'cold ! ;
 
