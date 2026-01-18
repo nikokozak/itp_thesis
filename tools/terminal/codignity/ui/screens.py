@@ -1384,6 +1384,8 @@ def draw_help(win: curses.window, state: AppState) -> None:
     add_binding(row, "j/k", "Move   r Refresh   Esc Back", COLOR_PROMPT)
     row += 1
     add_binding(row, "c/u", "Claim / Release   i/o/t In / Out / Toggle", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "Legend", "X flash  ! strapping  I input-only  S safe", COLOR_DIM)
 
     row += 2
     add_binding(row, "Theme", "cyberpunk|classic (ENV: CODIGNITY_TUI_THEME)", COLOR_DIM)
@@ -1613,13 +1615,20 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
             )
             win.hline(y + 2, x, curses.ACS_HLINE, min(inner_w, 50), curses.color_pair(COLOR_BORDER))
+            win.addstr(
+                y + 3,
+                x,
+                "Legend: X flash  ! strapping  I input-only  S safe   (+ power  - gnd  ~ ctrl)"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
             col1_x = x
             col2_x = x + 26  # Space for left column
             cell_w = 24
 
-            for i in range(min(max_rows, inner_h - 6)):
-                row_y = y + 4 + i
+            max_pin_rows = max(0, inner_h - 10)  # Leave room for details + instructions.
+            for i in range(min(max_rows, max_pin_rows)):
+                row_y = y + 5 + i
 
                 # Left column
                 if i < len(left_pins):
@@ -1633,6 +1642,8 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                                 cell_attr = curses.color_pair(COLOR_ERROR)
                             elif ps.is_strapping():
                                 cell_attr = curses.color_pair(COLOR_WARNING)
+                            elif ps.is_input_only():
+                                cell_attr = curses.color_pair(COLOR_WARNING) | curses.A_DIM
                             elif ps.is_safe():
                                 cell_attr = curses.color_pair(COLOR_SUCCESS)
                     else:
@@ -1655,6 +1666,8 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                                 cell_attr = curses.color_pair(COLOR_ERROR)
                             elif ps.is_strapping():
                                 cell_attr = curses.color_pair(COLOR_WARNING)
+                            elif ps.is_input_only():
+                                cell_attr = curses.color_pair(COLOR_WARNING) | curses.A_DIM
                             elif ps.is_safe():
                                 cell_attr = curses.color_pair(COLOR_SUCCESS)
                     else:
@@ -1674,9 +1687,15 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 f"Board: {state.pins_board_id or 'unknown'}"[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
             )
+            win.addstr(
+                y + 2,
+                x,
+                "Legend: X flash  ! strapping  I input-only  S safe"[:inner_w].ljust(inner_w),
+                curses.color_pair(COLOR_DIM) | curses.A_DIM,
+            )
 
-            list_start = y + 3
-            visible_count = inner_h - 5
+            list_start = y + 4
+            visible_count = max(0, inner_h - 9)  # Leave room for details + instructions.
 
             for i, gpio in enumerate(state.pins_gpios[:visible_count]):
                 state_data = state.pins_data.get(gpio)
@@ -1689,7 +1708,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
 
                 if gpio == selected_gpio:
                     attr = curses.color_pair(COLOR_MENU_SELECTED) | curses.A_BOLD
-                elif state_data and state_data.is_dangerous():
+                elif state_data and (state_data.is_dangerous() or state_data.is_input_only()):
                     attr = curses.color_pair(COLOR_WARNING)
                 else:
                     attr = curses.color_pair(COLOR_PANEL)
@@ -1728,7 +1747,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
         win.addstr(
             y + inner_h - 1,
             x,
-            "j/k Move   r Refresh   Esc Back".ljust(inner_w),
+            "j/k Move   t Toggle   i/o Mode   c Claim   u Release   r Refresh   Esc Back"[:inner_w].ljust(inner_w),
             curses.color_pair(COLOR_DIM) | curses.A_DIM,
         )
 
@@ -1754,10 +1773,14 @@ def _format_pin_cell_tui(pin_def, pins_data: dict, selected_gpio: int | None) ->
     owner = state.owner[:4] if state.owner else "-"
 
     warn = ""
-    if "strapping" in state.flags:
-        warn = "!"
-    elif "flash" in state.flags:
+    if "flash" in state.flags:
         warn = "X"
+    elif "strapping" in state.flags:
+        warn = "!"
+    elif "input-only" in state.flags:
+        warn = "I"
+    elif "safe" in state.flags:
+        warn = "S"
 
     return f"{pin_def.label:4s} G{gpio:02d} L{level} M{mode_abbr} {owner:4s}{warn}"
 
