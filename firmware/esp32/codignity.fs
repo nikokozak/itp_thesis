@@ -770,22 +770,22 @@ variable cd-flags-len
   \ Check constraints
   gpio cd-pin-flags@ 8 and if s" pin_flash" cd.#err cd.!end exit then
   gpio cd-pin-flags@ 4 and if s" pin_input_only" cd.#err cd.!end exit then
+  \ Writes are output semantics: ensure OUTPUT mode unless already out.
+  gpio cd-pin-mode@ 2 <> if
+    gpio OUTPUT pinMode
+    2 gpio cd-pin-mode!
+  then
   \ Parse value
   bl parse cd-skip-spaces
   dup 0= if 2drop s" pin_syntax" cd.#err cd.!end exit then
   2dup s" 0" str= if
-    2drop 0 gpio digitalWrite
+    2drop gpio 0 digitalWrite
   else
     2dup s" 1" str= if
-      2drop 1 gpio digitalWrite
+      2drop gpio 1 digitalWrite
     else
       2drop s" pin_value_invalid" cd.#err cd.!end exit
     then
-  then
-  \ Auto-set mode to out if unknown
-  gpio cd-pin-mode@ 0= if
-    gpio OUTPUT pinMode
-    2 gpio cd-pin-mode!
   then
   cd.!ok cd.!end ;
 
