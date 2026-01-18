@@ -212,7 +212,7 @@ def _do_load(state: AppState, persist: bool) -> None:
         # Open session with short settle to interrupt autoexec
         with SerialSession.open(port=state.port or None, settle_s=2.0, quiet=False) as session:
             # Send interrupt to stop autoexec
-            session.send_line("")
+            session.send_line("sp0 sp!")
             time.sleep(0.3)
             session.drain(0.2)
 
@@ -367,7 +367,7 @@ def _do_restore(state: AppState, snapshot_path: str) -> None:
 
         with SerialSession.open(port=state.port or None, settle_s=2.0, quiet=False) as session:
             # Interrupt autoexec
-            session.send_line("")
+            session.send_line("sp0 sp!")
             time.sleep(0.3)
             session.drain(0.2)
 

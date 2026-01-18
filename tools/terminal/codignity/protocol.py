@@ -65,6 +65,8 @@ def parse_identity(response: str) -> dict[str, str]:
     for line in response.splitlines():
         line = line.strip()
         if line.startswith("! "):
+            if line == "! end":
+                continue
             parts = line[2:].split(None, 1)
             if len(parts) >= 1:
                 key = parts[0]
@@ -237,7 +239,7 @@ def ensure_protocol(session: SerialSession, timeout_s: float = 3.0) -> bool:
     try:
         session.send_line("revive")
         result = session.read_until(MARKER_OK, timeout_s)
-        if result.found and b"NOT FOUND" not in result.data:
+        if result.found and b"not found" not in result.data.lower():
             # revive succeeded - verify protocol mode
             session.drain(0.2)
             try:

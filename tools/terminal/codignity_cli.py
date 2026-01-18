@@ -402,11 +402,11 @@ def cmd_load(args: argparse.Namespace) -> int:
                 transcript.record_comment("Interrupting autoexec to enter REPL...")
                 print("Entering REPL mode...")
 
-                # Send empty line to interrupt autoexec
-                session.send_line("")
+                # Send a safe no-op to interrupt autoexec (avoid empty-line replay quirks)
+                session.send_line("sp0 sp!")
                 result = session.read_until(b" ok", args.timeout)
                 if not result.found:
-                    # Try again with stack reset
+                    # Try again (device may still be in autoexec)
                     session.send_line("sp0 sp!")
                     result = session.read_until(b" ok", args.timeout)
 
@@ -673,7 +673,8 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
                 transcript.record_comment("Interrupting autoexec to enter REPL...")
                 print("Entering REPL mode...")
 
-                session.send_line("")
+                # Send a safe no-op to interrupt autoexec (avoid empty-line replay quirks)
+                session.send_line("sp0 sp!")
                 result = session.read_until(b" ok", args.timeout)
                 if not result.found:
                     session.send_line("sp0 sp!")
