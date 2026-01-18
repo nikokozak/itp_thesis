@@ -914,36 +914,49 @@ variable cd-old-notfound
   cd.!ok
   cd.!end ;
 
+: cd-call$ ( a n -- )
+  2dup find dup 0= if
+    drop
+    s" notfound" cd.#err
+    2dup cd.#
+    cd.!end
+    2drop
+    exit
+  then
+  >r
+  2drop
+  r> execute ;
+
 : cd-dispatch ( a n -- )
   dup 0= if 2drop exit then
   \ Routing prefix: @name cmd (Milestone D; currently unimplemented).
   2dup over c@ [char] @ = if
     cd-drop1 cd-route 2drop exit
   then
-  2dup s" ?" str= if 2drop ? exit then
-  2dup s" s" str= if 2drop s exit then
-  2dup s" n" str= if 2drop n exit then
-  2dup s" d" str= if 2drop d exit then
-  2dup s" c" str= if 2drop c exit then
-  2dup s" explain" str= if 2drop explain exit then
-  2dup s" history" str= if 2drop history exit then
-  2dup s" source" str= if 2drop source exit then
-  2dup s" define" str= if 2drop define exit then
-  2dup s" meta" str= if 2drop meta exit then
-  2dup s" save" str= if 2drop save exit then
-  2dup s" validate" str= if 2drop validate exit then
-  2dup s" safe-save" str= if 2drop safe-save exit then
-  2dup s" restart" str= if 2drop restart exit then
-  2dup s" recover" str= if 2drop recover exit then
-  2dup s" rollback" str= if 2drop rollback exit then
-  2dup s" repl" str= if 2drop repl exit then
-  2dup s" pins" str= if 2drop pins exit then
-  2dup s" pin-status" str= if 2drop pin-status exit then
-  2dup s" pin-claim" str= if 2drop pin-claim exit then
-  2dup s" pin-release" str= if 2drop pin-release exit then
-  2dup s" pin-mode" str= if 2drop pin-mode exit then
-  2dup s" pin-read" str= if 2drop pin-read exit then
-  2dup s" pin-write" str= if 2drop pin-write exit then
+  2dup s" ?" str= if 2drop s" ?" cd-call$ exit then
+  2dup s" s" str= if 2drop s" s" cd-call$ exit then
+  2dup s" n" str= if 2drop s" n" cd-call$ exit then
+  2dup s" d" str= if 2drop s" d" cd-call$ exit then
+  2dup s" c" str= if 2drop s" c" cd-call$ exit then
+  2dup s" explain" str= if 2drop s" explain" cd-call$ exit then
+  2dup s" history" str= if 2drop s" history" cd-call$ exit then
+  2dup s" source" str= if 2drop s" source" cd-call$ exit then
+  2dup s" define" str= if 2drop s" define" cd-call$ exit then
+  2dup s" meta" str= if 2drop s" meta" cd-call$ exit then
+  2dup s" save" str= if 2drop s" save" cd-call$ exit then
+  2dup s" validate" str= if 2drop s" validate" cd-call$ exit then
+  2dup s" safe-save" str= if 2drop s" safe-save" cd-call$ exit then
+  2dup s" restart" str= if 2drop s" restart" cd-call$ exit then
+  2dup s" recover" str= if 2drop s" recover" cd-call$ exit then
+  2dup s" rollback" str= if 2drop s" rollback" cd-call$ exit then
+  2dup s" repl" str= if 2drop s" repl" cd-call$ exit then
+  2dup s" pins" str= if 2drop s" pins" cd-call$ exit then
+  2dup s" pin-status" str= if 2drop s" pin-status" cd-call$ exit then
+  2dup s" pin-claim" str= if 2drop s" pin-claim" cd-call$ exit then
+  2dup s" pin-release" str= if 2drop s" pin-release" cd-call$ exit then
+  2dup s" pin-mode" str= if 2drop s" pin-mode" cd-call$ exit then
+  2dup s" pin-read" str= if 2drop s" pin-read" cd-call$ exit then
+  2dup s" pin-write" str= if 2drop s" pin-write" cd-call$ exit then
   s" notfound" cd.#err
   2dup cd.#
   cd.!end
