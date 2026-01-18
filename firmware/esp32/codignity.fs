@@ -1043,7 +1043,9 @@ variable cd-old-notfound
     \ Backup last saved image before overwriting the primary remember file.
     cd-myforth$ cd-file-exists? if
       cd-myforth$ cd-lkg$ cd-copy-file 0= if
-        s" lkg_io" cd.#err cd.!end exit
+        \ Best-effort: if the filesystem is too full to keep both images,
+        \ proceed without a rollback image.
+        cd-lkg$ delete-file drop
       then
     then
     cd-myforth$ save-name
