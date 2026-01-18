@@ -44,4 +44,6 @@ line-oriented UART protocol designed to be readable and maintainable “offline�
 - Default reference: `FORTH_REFERENCE.pdf` for stack effects and core words.
 - If unclear, run a tiny on-device probe (`depth .`, `see <word>`) or request network approval to consult
   Forth-2012 / ESP32forth docs.
+- ESP32forth reference: https://esp32forth.appspot.com/ESP32forth.html
+- ESP32forth/ueForth source: https://github.com/flagxor/ueforth
 - Document dialect gotchas here (or in `PROTOCOL_REFERENCE.md`) as soon as they’re discovered.
