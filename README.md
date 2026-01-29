@@ -1,4 +1,4 @@
-# Computational Dignity (Thesis)
+# Bedrock Protocol (Thesis)
 
 This repository is the working spec and (soon) prototype for **self-describing embedded systems**: small “nodes” that can explain themselves, show their own source, record their own modification history, and be reprogrammed interactively over a simple text protocol.
 
@@ -10,7 +10,7 @@ This repository is the working spec and (soon) prototype for **self-describing e
 
 ## Current Status
 
-Docs/specs are present alongside working ESP32 firmware (`firmware/esp32/codignity.fs`) and terminal tooling (`tools/terminal/`). The initial baseline target is **ESP32 + ESP32forth** for the smart node, with **ATtiny (C)** as the first “dumb node / sensor adapter” implementation (in progress).
+Docs/specs are present alongside working ESP32 firmware (`firmware/esp32/bedrock.fs`) and terminal tooling (`tools/terminal/`). The initial baseline target is **ESP32 + ESP32forth** for the smart node, with **ATtiny (C)** as the first “dumb node / sensor adapter” implementation (in progress).
 
 ## Principles (Non-Negotiable)
 

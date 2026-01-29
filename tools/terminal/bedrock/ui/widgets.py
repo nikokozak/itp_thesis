@@ -1,4 +1,4 @@
-"""Minimal curses widgets for Codignity TUI.
+"""Minimal curses widgets for Bedrock TUI.
 
 TODO(thesis): Widgets need polish:
 - FileBrowser: Add search/filter, remember last path, handle long filenames
@@ -632,12 +632,12 @@ class Checkbox:
 
 @dataclass
 class FileBrowser:
-    """Simple file browser for selecting .cdsnap files."""
+    """Simple file browser for selecting snapshot files."""
 
     path: str = "."
     files: list[str] = field(default_factory=list)
     selected: int = 0
-    filter_ext: str = ".cdsnap"
+    filter_exts: tuple[str, ...] = (".brsnap", ".cdsnap")
 
     def __post_init__(self) -> None:
         self.refresh()
@@ -662,7 +662,7 @@ class FileBrowser:
                 if item.is_dir() and not item.name.startswith("."):
                     entries.append(item.name + "/")
                 elif item.is_file():
-                    if not self.filter_ext or item.suffix == self.filter_ext:
+                    if not self.filter_exts or item.suffix in self.filter_exts:
                         entries.append(item.name)
         except PermissionError:
             pass

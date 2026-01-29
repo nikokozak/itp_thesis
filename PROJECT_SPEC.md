@@ -1,4 +1,4 @@
-# Computational Dignity: Self-Describing Embedded Systems
+# Bedrock Protocol: Self-Describing Embedded Systems
 
 ## Project Production Document
 **Version:** 1.0  
@@ -112,10 +112,10 @@ This project proposes an ideological shift: from *devices as nodes in a system* 
 > "Every device should survive the system that created it."
 
 **One paragraph:**
-> We deploy billions of microcontrollers assuming the world that made them will persist—the companies, the cloud services, the toolchains, the supply chains. History suggests otherwise. Codignity is a firmware foundation that makes embedded devices self-sufficient: able to identify themselves, explain their state, be reprogrammed, and recover from failure—requiring nothing beyond the device itself. Not because we expect collapse, but because computation shouldn't depend on the permanence of any external system.
+> We deploy billions of microcontrollers assuming the world that made them will persist—the companies, the cloud services, the toolchains, the supply chains. History suggests otherwise. Bedrock is a firmware foundation that makes embedded devices self-sufficient: able to identify themselves, explain their state, be reprogrammed, and recover from failure—requiring nothing beyond the device itself. Not because we expect collapse, but because computation shouldn't depend on the permanence of any external system.
 
 **The cyberpunk framing:**
-> We were promised that any computer could be *a computer*. We got billions of processors we can't use. Codignity returns embedded devices to the universal computational substrate they always were.
+> We were promised that any computer could be *a computer*. We got billions of processors we can't use. Bedrock returns embedded devices to the universal computational substrate they always were.
 
 ---
 

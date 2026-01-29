@@ -1,1 +1,0 @@
-"""Codignity TUI components."""

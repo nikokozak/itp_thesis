@@ -5,7 +5,7 @@
 # Port: /dev/cu.usbserial-0001
 
 ## Setup
-- Starts by loading `firmware/esp32/codignity.fs` (muted; waits for `ok` per line).
+- Starts by loading `firmware/esp32/bedrock.fs` (muted; waits for `ok` per line).
 - Then runs protocol commands (each ends with `! end`).
 
 ## Commands + Output

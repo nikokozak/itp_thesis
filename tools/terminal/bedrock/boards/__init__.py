@@ -1,4 +1,4 @@
-"""Board manifests for Codignity terminal tooling.
+"""Board manifests for Bedrock terminal tooling.
 
 Board manifests define the physical layout of development boards,
 mapping GPIO numbers to physical positions and labels.

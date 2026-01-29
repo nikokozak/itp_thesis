@@ -67,7 +67,7 @@
 ! id <name>
 ! role <role>
 ! mcu <chip>
-! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
+! ver <version>         ← from `meta ver` (default: `bedrock-0.1`)
 ! board <board-id>      ← optional (if set via `meta board`)
 ! fifo <size>
 ! units <units>         ← optional (if set via `meta`)
@@ -100,7 +100,7 @@ Child descriptors (`! child ...`) are planned for Milestone D routing; currently
 ! id <name>
 ! role <role>
 ! mcu <chip>
-! ver <version>         ← from `meta ver` (default: `codignity-0.1`)
+! ver <version>         ← from `meta ver` (default: `bedrock-0.1`)
 ! board <board-id>      ← optional
 ! units <units>         ← optional
 ! pins <pins>           ← optional

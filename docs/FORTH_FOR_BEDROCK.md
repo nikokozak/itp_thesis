@@ -1,6 +1,6 @@
-# Forth for Codignity
+# Forth for Bedrock
 
-A practical guide to programming Codignity nodes. This is not a complete Forth tutorial—just enough to be productive with the Codignity protocol and define custom behaviors.
+A practical guide to programming Bedrock nodes. This is not a complete Forth tutorial—just enough to be productive with the Bedrock protocol and define custom behaviors.
 
 ## The Stack Model
 
@@ -49,7 +49,7 @@ In raw Forth, you define new words with `: name ... ;`:
 5 square .   \ prints 25
 ```
 
-In Codignity protocol mode, use the `define` command:
+In Bedrock protocol mode, use the `define` command:
 
 ```
 define : square dup * ;
@@ -85,9 +85,9 @@ magic .                   \ prints 123
 
 ---
 
-## Codignity Protocol Commands
+## Bedrock Protocol Commands
 
-These commands work in protocol mode (after loading Codignity firmware).
+These commands work in protocol mode (after loading Bedrock firmware).
 
 ### Identity and Metadata
 
@@ -151,7 +151,7 @@ depth              \ push current stack depth
 .s                 \ print stack non-destructively
 ```
 
-In Codignity, also use:
+In Bedrock, also use:
 
 ```
 source             \ show user definitions
@@ -291,5 +291,5 @@ variable state
 
 - **Starting Forth** by Leo Brodie — Classic introduction (free online)
 - **Thinking Forth** by Leo Brodie — Philosophy of Forth programming
-- **Mecrisp-Stellaris** — The Forth implementation Codignity extends
+- **Mecrisp-Stellaris** — The Forth implementation Bedrock extends
 - **ESP32 Technical Reference** — For understanding GPIO, ADC, peripherals

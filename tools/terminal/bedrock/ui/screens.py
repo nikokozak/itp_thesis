@@ -1,4 +1,4 @@
-"""Screen management and state machine for Codignity TUI.
+"""Screen management and state machine for Bedrock TUI.
 
 IO worker maintains a persistent SerialSession that is reused across commands.
 - First probe: 5s settle (allow autoexec to complete)
@@ -179,7 +179,7 @@ def create_main_menu(state: AppState) -> Menu:
         MenuItem("Quit", "q", enabled=True),
     ]
 
-    return Menu("Codignity", items)
+    return Menu("Bedrock", items)
 
 
 def handle_menu_select(state: AppState, key: str) -> Action | None:
@@ -208,7 +208,7 @@ def _do_load(state: AppState, persist: bool) -> None:
     from pathlib import Path
 
     # Find firmware file
-    firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "codignity.fs"
+    firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "bedrock.fs"
     if not firmware_path.exists():
         state.result_queue.put(("load_error", f"Firmware not found: {firmware_path}"))
         return
@@ -366,7 +366,7 @@ def _do_restore(state: AppState, snapshot_path: str) -> None:
         snapshot = Snapshot.load(Path(snapshot_path))
 
         # Find firmware
-        firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "codignity.fs"
+        firmware_path = Path(__file__).parent.parent.parent.parent.parent / "firmware" / "esp32" / "bedrock.fs"
         if not firmware_path.exists():
             state.result_queue.put(("restore_error", f"Firmware not found: {firmware_path}"))
             return
@@ -609,7 +609,7 @@ def io_worker(state: AppState) -> None:
                 elif action == "snapshot_create":
                     # Snapshot opens its own session, no device reboot
                     close_persistent()
-                    filename = args[0] if args else "snapshot.cdsnap"
+                    filename = args[0] if args else "snapshot.brsnap"
                     safe_save = args[1] if len(args) > 1 else False
                     _do_snapshot_create(state, filename, safe_save)
 
@@ -1272,7 +1272,7 @@ def execute_action(state: AppState, action: Action | None) -> None:
     elif action == Action.SNAPSHOT:
         # Initialize snapshot wizard state
         from datetime import datetime
-        state.snapshot_filename = f"snapshot-{datetime.now().strftime('%Y%m%d-%H%M%S')}.cdsnap"
+        state.snapshot_filename = f"snapshot-{datetime.now().strftime('%Y%m%d-%H%M%S')}.brsnap"
         state.snapshot_defs_count = 0
         state.snapshot_safe_save.checked = False
         state.snapshot_status = ""
@@ -1280,7 +1280,7 @@ def execute_action(state: AppState, action: Action | None) -> None:
 
     elif action == Action.RESTORE:
         # Initialize restore wizard state
-        state.restore_file_browser = FileBrowser(path=".", filter_ext=".cdsnap")
+        state.restore_file_browser = FileBrowser(path=".", filter_exts=(".brsnap", ".cdsnap"))
         state.restore_snapshot_path = ""
         state.restore_preview = []
         state.restore_progress = 0.0
@@ -1352,7 +1352,7 @@ def draw_help(win: curses.window, state: AppState) -> None:
             pass
 
     row = y + 1
-    add_line(row, "CODIGNITY // CONTROL DECK — HELP", COLOR_TITLE, curses.A_BOLD)
+    add_line(row, "BEDROCK // CONTROL DECK — HELP", COLOR_TITLE, curses.A_BOLD)
     row += 1
     try:
         win.hline(row, x, curses.ACS_HLINE, min(inner_w, 60), curses.color_pair(COLOR_BORDER))
@@ -1388,7 +1388,7 @@ def draw_help(win: curses.window, state: AppState) -> None:
     add_binding(row, "Legend", "X flash  ! strapping  I input-only  S safe", COLOR_DIM)
 
     row += 2
-    add_binding(row, "Theme", "cyberpunk|classic (ENV: CODIGNITY_TUI_THEME)", COLOR_DIM)
+    add_binding(row, "Theme", "cyberpunk|classic (ENV: BEDROCK_TUI_THEME)", COLOR_DIM)
 
     footer = "Esc: Close"
     add_line(y + inner_h - 1, footer, COLOR_KEY_HINT)
@@ -1396,7 +1396,7 @@ def draw_help(win: curses.window, state: AppState) -> None:
 
 def draw_load_wizard(win: curses.window, state: AppState) -> None:
     """Draw the load firmware wizard."""
-    y, x, inner_h, inner_w = draw_wizard_frame(win, "Load Codignity", 12, 50)
+    y, x, inner_h, inner_w = draw_wizard_frame(win, "Load Bedrock", 12, 50)
 
     try:
         # Status message
@@ -1545,7 +1545,7 @@ def draw_restore_wizard(win: curses.window, state: AppState) -> None:
             win.addstr(
                 y + 1,
                 x,
-                "Select a .cdsnap file:".ljust(inner_w),
+                "Select a .brsnap (or legacy .cdsnap) file:".ljust(inner_w),
                 curses.color_pair(COLOR_DIM) | curses.A_DIM,
             )
 
@@ -1803,7 +1803,7 @@ def draw_screen(win: curses.window, state: AppState) -> None:
         link = "ON" if state.connected else "OFF"
         node = state.node_id or "—"
         right = f"{now}  {port_label}  LINK:{link}"
-        draw_chrome_line(win, 0, " CODIGNITY :: CONTROL DECK ", right, attr=curses.A_BOLD)
+        draw_chrome_line(win, 0, " BEDROCK :: CONTROL DECK ", right, attr=curses.A_BOLD)
 
         banner_lines = draw_banner(win, y=1)
         info_y = 1 + banner_lines
@@ -1984,7 +1984,7 @@ def run_tui(port: str | None = None, theme: str | None = None) -> int:
         io_thread.start()
 
         # Initial probe
-        state.log.append("Codignity TUI started", COLOR_SUCCESS)
+        state.log.append("Bedrock TUI started", COLOR_SUCCESS)
         state.log.append("Press Tab for menu, ? for help")
 
         if port:

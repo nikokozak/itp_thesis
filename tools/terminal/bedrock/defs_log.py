@@ -1,6 +1,6 @@
 """Per-node defs log management for cross-invocation define capture.
 
-Defs logs are stored in .codignity/defs/<node_id>.defs (repo-local, gitignored).
+Defs logs are stored in .bedrock/defs/<node_id>.defs (repo-local, gitignored).
 Format:
   - Comment lines start with # (may include ISO8601 UTC timestamp + port)
   - One `define : name ... ;` line per definition
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Repo-local defs directory (should be gitignored)
-DEFS_DIR = Path(".codignity/defs")
+DEFS_DIR = Path(".bedrock/defs")
 
 
 def get_defs_path(node_id: str) -> Path:

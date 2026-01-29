@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PY="${ROOT_DIR}/.venv/bin/python"
-TUI="${ROOT_DIR}/tools/terminal/codignity_tui.py"
+TUI="${ROOT_DIR}/tools/terminal/bedrock_tui.py"
 
 cd "${ROOT_DIR}"
 

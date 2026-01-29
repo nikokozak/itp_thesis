@@ -1,13 +1,13 @@
-# Codignity Milestone C Smoke Test Transcript
+# Bedrock Milestone C Smoke Test Transcript
 # Date: 2026-01-12
 # Branch: feat/milestone-c-cli
 # Purpose: Demonstrate CLI workflow with defs capture, diff noise suppression, restore re-probe
 
 ## 1. Probe Device
-$ codignity_cli.py probe --port /dev/cu.usbserial-0001
+$ bedrock_cli.py probe --port /dev/cu.usbserial-0001
 Port: /dev/cu.usbserial-0001
 Mode: protocol
-Codignity loaded: True
+Bedrock loaded: True
 Node ID: node1
 Role: gateway
 Version: thesis-0.1
@@ -18,22 +18,22 @@ Pins: gpio4
 Children: 0
 
 ## 2. Define New Word (Captured to Defs Log)
-$ codignity_cli.py define ": smoketest 999 ;" --port /dev/cu.usbserial-0001
+$ bedrock_cli.py define ": smoketest 999 ;" --port /dev/cu.usbserial-0001
 Defined: : smoketest 999 ;
-  (captured to .codignity/defs/node1.defs)
+  (captured to .bedrock/defs/node1.defs)
 
 ## 3. Create Snapshot (Loads from Defs Log)
-$ codignity_cli.py snapshot create --out smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
-  Loaded 1 defs from .codignity/defs/node1.defs
-Snapshot saved to: smoke-snapshot.cdsnap
+$ bedrock_cli.py snapshot create --out smoke-snapshot.brsnap --port /dev/cu.usbserial-0001
+  Loaded 1 defs from .bedrock/defs/node1.defs
+Snapshot saved to: smoke-snapshot.brsnap
   Node: node1
   Role: gateway
   Meta keys: 6
   Defs: 1
 
 ## 4. Show Diff (With Noise Suppression)
-$ codignity_cli.py snapshot diff --in smoke-snapshot.cdsnap --port /dev/cu.usbserial-0001
-Comparing snapshot (smoke-snapshot.cdsnap) vs live node:
+$ bedrock_cli.py snapshot diff --in smoke-snapshot.brsnap --port /dev/cu.usbserial-0001
+Comparing snapshot (smoke-snapshot.brsnap) vs live node:
   Snapshot: node1 @ 2026-01-12T06:57:30+00:00
   Baseline: 114 core defs filtered
 
@@ -42,19 +42,19 @@ Defines only on live node:
 Defines only in snapshot:
   - smoketest
 
-Note: Core firmware defs (114 words from codignity.fs) are filtered from diff output.
+Note: Core firmware defs (114 words from bedrock.fs) are filtered from diff output.
 Only user-defined words (foo, smoketest) are shown.
 
 ## 5. Restore from Snapshot (With Re-probe)
-$ codignity_cli.py snapshot restore --in smoke-snapshot.cdsnap --yes --port /dev/cu.usbserial-0001
-Loaded snapshot: smoke-snapshot.cdsnap
+$ bedrock_cli.py snapshot restore --in smoke-snapshot.brsnap --yes --port /dev/cu.usbserial-0001
+Loaded snapshot: smoke-snapshot.brsnap
   Date: 2026-01-12T06:57:30+00:00
   Node: node1
   Role: gateway
   Meta keys: 6
   Defs: 1
 Entering REPL mode...
-Loading codignity.fs...
+Loading bedrock.fs...
   [100%] 607 lines loaded.
 Entering protocol mode...
 Applying 6 meta settings...
@@ -71,13 +71,13 @@ Restore complete. Final state:
   Node ID: node1
   Role: gateway
   Mode: protocol
-  Codignity loaded: True
+  Bedrock loaded: True
 
 ## 6. Verify Restored State
-$ codignity_cli.py probe --port /dev/cu.usbserial-0001
+$ bedrock_cli.py probe --port /dev/cu.usbserial-0001
 Port: /dev/cu.usbserial-0001
 Mode: protocol
-Codignity loaded: True
+Bedrock loaded: True
 Node ID: node1
 Role: gateway
 Version: thesis-0.1
@@ -89,7 +89,7 @@ Children: 0
 
 ## Summary
 - probe: Identifies node, confirms protocol mode
-- define: Captures to .codignity/defs/<node_id>.defs for persistence
+- define: Captures to .bedrock/defs/<node_id>.defs for persistence
 - snapshot create: Loads defs from per-node log automatically
 - snapshot diff: Filters 114 core firmware defs, shows only user defs
 - snapshot restore: Full reload + apply defs + validate + persist + re-probe verification

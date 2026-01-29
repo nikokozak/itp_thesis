@@ -15,10 +15,10 @@ This document is an implementation spec intended to be executed by another engin
    - Live pin **state** (mode/level/pull/owner) for the GPIO pins that exist on the footprint.
 2. User can run **`pin-status D4`** (or `GPIO4`, or `4`) and get a single structured response.
 
-### B. Pin ownership model (“is this pin used by Codignity?”)
-3. Firmware exposes a **pin registry** that tracks *Codignity-level ownership* (not raw ESP32forth kernel usage):
+### B. Pin ownership model (“is this pin used by Bedrock?”)
+3. Firmware exposes a **pin registry** that tracks *Bedrock-level ownership* (not raw ESP32forth kernel usage):
    - `owner` is a single-token label (e.g., `button`, `i2c`, `user`).
-   - Registry is updated by Codignity pin helper commands (and by any higher-level Codignity modules we write).
+   - Registry is updated by Bedrock pin helper commands (and by any higher-level Bedrock modules we write).
 
 ### C. Safe pin manipulation helpers
 4. Firmware provides minimal safe helpers:
@@ -61,13 +61,13 @@ pins
 ! end
 ```
 
-### 1.3 “Ownership” is Codignity-scoped
-The registry indicates what *Codignity* (and Codignity-wrapped code) claims, not what the ESP32 kernel happens to do.
+### 1.3 “Ownership” is Bedrock-scoped
+The registry indicates what *Bedrock* (and Bedrock-wrapped code) claims, not what the ESP32 kernel happens to do.
 This is the only honest definition unless we fork/replace ESP32forth’s GPIO words.
 
 ---
 
-## 2) Firmware Work (ESP32forth / `firmware/esp32/codignity.fs`)
+## 2) Firmware Work (ESP32forth / `firmware/esp32/bedrock.fs`)
 
 ### 2.1 Add a `board` meta key (single token)
 - Add `meta board <board-id>` support (already handled by generic `meta`).
@@ -77,10 +77,10 @@ This is the only honest definition unless we fork/replace ESP32forth’s GPIO wo
 
 ### 2.2 Pin registry (RAM only v1)
 Implement fixed-size arrays for GPIO 0..39:
-- `cd-pin-mode[40]` → enum: `unknown/in/out/adc/i2c/uart/pwm/reserved`
-- `cd-pin-pull[40]` → enum: `none/up/down`
-- `cd-pin-owner[40]` → fixed-length string entry (e.g., 16 bytes + length byte)
-- `cd-pin-flags[40]` → bitmask (safe, strapping, input-only, flash, etc)
+- `br-pin-mode[40]` → enum: `unknown/in/out/adc/i2c/uart/pwm/reserved`
+- `br-pin-pull[40]` → enum: `none/up/down`
+- `br-pin-owner[40]` → fixed-length string entry (e.g., 16 bytes + length byte)
+- `br-pin-flags[40]` → bitmask (safe, strapping, input-only, flash, etc)
 
 Notes:
 - Populate `flags` table statically for known ESP32 constraints:
@@ -90,7 +90,7 @@ Notes:
 
 ### 2.3 Pin token parsing (`D4` / `GPIO4` / `4`)
 Add a helper:
-- `cd-parse-gpio ( a n -- gpio f )`
+- `br-parse-gpio ( a n -- gpio f )`
   - Accept decimal `0..39`
   - Accept `D<n>` (case-insensitive)
   - Accept `GPIO<n>` (case-insensitive)
@@ -155,7 +155,7 @@ Add checks that the SAFE GPIO is still configured as input with pull-up when in 
 
 ### 3.1 Board manifests (new module)
 Add a new package:
-- `tools/terminal/codignity/boards/`
+- `tools/terminal/bedrock/boards/`
   - `__init__.py`
   - `doit-esp32-devkit-v1.json` (or `.toml`)
 
@@ -210,12 +210,12 @@ Right header (top → bottom):
 - `R15` `EN` (control / reset enable; not a GPIO)
 
 ### 3.2 Protocol parsing helpers
-Add `codignity/pins.py`:
+Add `bedrock/pins.py`:
 - `PinState` dataclass: gpio, label?, mode, level, pull, owner, flags(set)
 - `parse_pin_kv(line: str) -> PinState`
 - `parse_pins_response(text: str) -> tuple[board_id|None, dict[int, PinState]]`
 
-### 3.3 CLI additions (`tools/terminal/codignity_cli.py`)
+### 3.3 CLI additions (`tools/terminal/bedrock_cli.py`)
 Add subcommands:
 - `pins`:
   - Calls protocol `pins`
@@ -231,7 +231,7 @@ Add subcommands:
 Keep output:
 - Human readable by default; add `--json` where useful (PinState list).
 
-### 3.4 TUI additions (`tools/terminal/codignity/ui/screens.py`)
+### 3.4 TUI additions (`tools/terminal/bedrock/ui/screens.py`)
 Add a new screen/state:
 - `Screen.PINS` and `Action.PINS`
 
@@ -259,16 +259,16 @@ Performance:
 
 ---
 
-## 4) Documentation + Training (minimal, Codignity-specific)
+## 4) Documentation + Training (minimal, Bedrock-specific)
 
-Create `docs/FORTH_FOR_CODIGNITY.md` (short, practical):
+Create `docs/FORTH_FOR_BEDROCK.md` (short, practical):
 - Stack effect notation, `dup drop swap over rot -rot`
-- Defining words via Codignity `define`
-- Using Codignity helpers (`pin-*`, `meta`, `history`)
+- Defining words via Bedrock `define`
+- Using Bedrock helpers (`pin-*`, `meta`, `history`)
 - How to inspect (`see`, `words`, `depth`) safely
 - 10-minute “make something” exercises
 
-This is not a full Forth book; it’s a runway into *Codignity’s* dialect and workflow.
+This is not a full Forth book; it’s a runway into *Bedrock’s* dialect and workflow.
 
 ---
 
@@ -280,6 +280,6 @@ This is not a full Forth book; it’s a runway into *Codignity’s* dialect and 
 4. TUI: Pins Inspector screen (read-only refresh first)
 5. Firmware: `pin-claim/release`, `pin-mode/read/write`
 6. TUI: interactive pin actions + safety confirmations
-7. Docs: `docs/FORTH_FOR_CODIGNITY.md`
+7. Docs: `docs/FORTH_FOR_BEDROCK.md`
 
 Each phase must ship with at least one new transcript artifact.

@@ -1,6 +1,6 @@
-"""Codignity snapshot format parser and writer.
+"""Bedrock snapshot format parser and writer.
 
-Snapshots capture the full state of a Codignity node for backup/restore.
+Snapshots capture the full state of a Bedrock node for backup/restore.
 Format is human-readable with sections for meta, defs, and notes.
 """
 
@@ -15,7 +15,7 @@ from typing import TextIO
 
 @dataclass
 class Snapshot:
-    """A snapshot of a Codignity node's state.
+    """A snapshot of a Bedrock node's state.
 
     Attributes:
         date: ISO8601 UTC timestamp when snapshot was created.
@@ -37,7 +37,7 @@ class Snapshot:
 
     @classmethod
     def load(cls, path: Path) -> "Snapshot":
-        """Load a snapshot from a .cdsnap file.
+        """Load a snapshot from a .brsnap file.
 
         Args:
             path: Path to the snapshot file.
@@ -71,7 +71,7 @@ class Snapshot:
             line = line.rstrip("\n\r")
 
             # Header comments
-            if line.startswith("# Codignity Snapshot"):
+            if re.match(r"^#\s+.*\bSnapshot\b", line):
                 saw_header = True
                 continue
 
@@ -136,7 +136,7 @@ class Snapshot:
                     notes[key] = value
 
         if not saw_header:
-            raise ValueError("Missing snapshot header: '# Codignity Snapshot ...'")
+            raise ValueError("Missing snapshot header (expected '# ... Snapshot ...')")
         if not date:
             raise ValueError("Missing snapshot date header: '# date: ...'")
         if not saw_section:
@@ -153,7 +153,7 @@ class Snapshot:
         )
 
     def save(self, path: Path) -> None:
-        """Save snapshot to a .cdsnap file.
+        """Save snapshot to a .brsnap file.
 
         Args:
             path: Destination path for the snapshot file.
@@ -164,7 +164,7 @@ class Snapshot:
     def _write(self, f: TextIO) -> None:
         """Write snapshot to file handle."""
         # Header
-        f.write("# Codignity Snapshot v1\n")
+        f.write("# Bedrock Snapshot v1\n")
         f.write(f"# date: {self.date}\n")
 
         # Node info line
@@ -253,10 +253,10 @@ def extract_def_name(define_line: str) -> str | None:
 
 
 def load_baseline_defs(firmware_path: Path) -> set[str]:
-    """Extract word names defined in the Codignity firmware source.
+    """Extract word names defined in the Bedrock firmware source.
 
-    "Baseline/core" here means words shipped by Codignity (our firmware sources,
-    typically `firmware/esp32/codignity.fs`), not ESP32forth's built-in kernel
+    "Baseline/core" here means words shipped by Bedrock (our firmware sources,
+    typically `firmware/esp32/bedrock.fs`), not ESP32forth's built-in kernel
     words. The CLI uses this set to suppress diff noise so `snapshot diff`
     focuses on user-defined words.
 
@@ -264,7 +264,7 @@ def load_baseline_defs(firmware_path: Path) -> set[str]:
     a set of baseline/core word names that should be excluded from diffs.
 
     Args:
-        firmware_path: Path to codignity.fs or similar Forth source file.
+        firmware_path: Path to bedrock.fs or similar Forth source file.
 
     Returns:
         Set of word names defined in the firmware.

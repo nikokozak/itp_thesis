@@ -1,4 +1,4 @@
-"""Pin state parsing and representation for Codignity protocol.
+"""Pin state parsing and representation for Bedrock protocol.
 
 Parses the output of `pins` and `pin-status` commands into structured data.
 """

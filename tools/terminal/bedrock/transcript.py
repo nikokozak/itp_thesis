@@ -1,4 +1,4 @@
-"""Transcript recording for Codignity sessions.
+"""Transcript recording for Bedrock sessions.
 
 Records all sent commands and received responses to a plain-text file
 for debugging, regression testing, and thesis artifacts.
@@ -58,7 +58,7 @@ class Transcript:
         self,
         path: Path,
         port: str,
-        title: str = "Codignity Session Transcript",
+        title: str = "Bedrock Session Transcript",
     ) -> None:
         """Initialize transcript recorder.
 
@@ -102,7 +102,7 @@ class Transcript:
         if commit:
             self._file.write(f"# Commit: {commit}\n")
         self._file.write(f"# Port: {self._port}\n")
-        self._file.write(f"# Tool: codignity-cli v{__version__}\n")
+        self._file.write(f"# Tool: bedrock-cli v{__version__}\n")
         self._file.write("\n")
 
     def record_sent(self, line: str) -> None:

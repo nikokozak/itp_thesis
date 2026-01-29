@@ -2,7 +2,7 @@
 
 ## Overview
 
-Extend Codignity to support multi-node topologies:
+Extend Bedrock to support multi-node topologies:
 - Gateway (ESP32) routes commands to child nodes via `@name cmd`
 - "Dumb node" (ATtiny) implements minimal protocol: `? s n d c validate`
 - CLI/TUI can probe and sample from any node in the tree
@@ -82,8 +82,8 @@ void cmd_validate(void);   // validate
 
 Add `@name` prefix support:
 ```bash
-codignity_cli.py send "@sensor1 ?" --port /dev/cu.usbserial-0001
-codignity_cli.py send "@sensor1 s" --port /dev/cu.usbserial-0001
+bedrock_cli.py send "@sensor1 ?" --port /dev/cu.usbserial-0001
+bedrock_cli.py send "@sensor1 s" --port /dev/cu.usbserial-0001
 ```
 
 Probe shows children:
@@ -102,25 +102,25 @@ Children: 2
 # Setup: ESP32 gateway + 1 ATtiny child on UART1
 
 ## 1. Probe gateway (shows child)
-$ codignity_cli.py probe
+$ bedrock_cli.py probe
 Node ID: gateway
 Children: 1
   [0] uart1: sensor1 (attiny84)
 
 ## 2. Probe child via routing
-$ codignity_cli.py send "@sensor1 ?"
+$ bedrock_cli.py send "@sensor1 ?"
 ! id sensor1
 ! mcu attiny84
 ! fifo 64
 ! end
 
 ## 3. Sample from child
-$ codignity_cli.py send "@sensor1 s"
+$ bedrock_cli.py send "@sensor1 s"
 ! 12345 512
 ! end
 
 ## 4. Dump child FIFO
-$ codignity_cli.py send "@sensor1 d 5"
+$ bedrock_cli.py send "@sensor1 d 5"
 ! 12340 510
 ! 12341 511
 ! 12342 512
@@ -166,7 +166,7 @@ Before implementation, please clarify:
 ## Implementation Phases
 
 ### Phase 1: Gateway Routing (Forth)
-- Add `@name` parser to `codignity.fs`
+- Add `@name` parser to `bedrock.fs`
 - Child table in meta (`children`, `child 0 uart1 sensor1 attiny84`)
 - Forward logic for UART bus
 

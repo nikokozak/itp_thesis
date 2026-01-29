@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Codignity TUI - ncurses interface for Codignity nodes.
+"""Bedrock TUI - ncurses interface for Bedrock Protocol nodes.
 
 Run from repo root:
-    .venv/bin/python tools/terminal/codignity_tui.py [--port PORT] [--theme THEME]
+    .venv/bin/python tools/terminal/bedrock_tui.py [--port PORT] [--theme THEME]
 
 Examples:
-    codignity_tui.py                    # Auto-detect port
-    codignity_tui.py --port /dev/ttyUSB0
-    codignity_tui.py --theme classic     # Conservative 8-color theme
+    bedrock_tui.py                    # Auto-detect port
+    bedrock_tui.py --port /dev/ttyUSB0
+    bedrock_tui.py --theme classic     # Conservative 8-color theme
 """
 
 from __future__ import annotations
@@ -17,16 +17,17 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure the codignity package is importable when run from repo root
+# Ensure the bedrock package is importable when run from repo root
 _this_dir = Path(__file__).parent
 if str(_this_dir) not in sys.path:
     sys.path.insert(0, str(_this_dir))
 
-from codignity.ui.screens import run_tui
+from bedrock.ui.screens import run_tui
 
 
-PORT_ENV = "CODIGNITY_PORT"
-LAST_PORT_PATH = Path.home() / ".codignity" / "last_port"
+PORT_ENV = "BEDROCK_PORT"
+PORT_ENV_LEGACY = "CODIGNITY_PORT"
+LAST_PORT_PATH = Path.home() / ".bedrock" / "last_port"
 
 
 def _load_last_port() -> str | None:
@@ -100,12 +101,12 @@ def resolve_port(explicit_port: str | None) -> str | None:
     if explicit_port:
         return explicit_port
 
-    env_port = os.environ.get(PORT_ENV, "").strip()
+    env_port = os.environ.get(PORT_ENV, "").strip() or os.environ.get(PORT_ENV_LEGACY, "").strip()
     if env_port:
         return env_port
 
-    from codignity.session import list_candidate_ports, SerialSession
-    from codignity.protocol import probe
+    from bedrock.session import list_candidate_ports, SerialSession
+    from bedrock.protocol import probe
 
     ports = list_candidate_ports()
     if not ports:
@@ -122,7 +123,7 @@ def resolve_port(explicit_port: str | None) -> str | None:
         _save_last_port(ports[0])
         return ports[0]
 
-    # Probe ports to find a Codignity node (best-effort).
+    # Probe ports to find a Bedrock node (best-effort).
     results: list[tuple[str, object]] = []
     for port in ports:
         try:
@@ -132,10 +133,10 @@ def resolve_port(explicit_port: str | None) -> str | None:
             results.append((port, exc))
 
     def label_for(result: object) -> str:
-        from codignity.protocol import ProbeResult
+        from bedrock.protocol import ProbeResult
 
         if isinstance(result, ProbeResult):
-            if result.codignity_loaded:
+            if result.bedrock_loaded:
                 ident = " ".join(
                     part
                     for part in (
@@ -145,27 +146,27 @@ def resolve_port(explicit_port: str | None) -> str | None:
                     )
                     if part
                 )
-                return f"[codignity] {ident}".rstrip()
-            return f"[{result.mode}] codignity:no"
+                return f"[bedrock] {ident}".rstrip()
+            return f"[{result.mode}] bedrock:no"
         return "[unavailable]"
 
-    codignity_ports = [
+    bedrock_ports = [
         port for port, result in results
-        if getattr(result, "codignity_loaded", False)
+        if getattr(result, "bedrock_loaded", False)
     ]
-    if len(codignity_ports) == 1:
-        _save_last_port(codignity_ports[0])
-        return codignity_ports[0]
+    if len(bedrock_ports) == 1:
+        _save_last_port(bedrock_ports[0])
+        return bedrock_ports[0]
 
-    # If multiple Codignity nodes are present, prompt selection.
-    if len(codignity_ports) > 1:
+    # If multiple Bedrock nodes are present, prompt selection.
+    if len(bedrock_ports) > 1:
         options = [(port, label_for(result)) for port, result in results]
         selected = _prompt_select_port(options)
         if selected:
             _save_last_port(selected)
         return selected
 
-    # No Codignity nodes detected: if exactly one responsive REPL target exists, use it.
+    # No Bedrock nodes detected: if exactly one responsive REPL target exists, use it.
     repl_ports = [
         port for port, result in results
         if getattr(result, "mode", None) == "repl"
@@ -187,17 +188,19 @@ def resolve_port(explicit_port: str | None) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Codignity TUI - ncurses interface for Codignity nodes.",
+        description="Bedrock TUI - ncurses interface for Bedrock Protocol nodes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--port",
-        help=f"Serial port path (auto-detects if omitted; env: {PORT_ENV}).",
+        help=(
+            f"Serial port path (auto-detects if omitted; env: {PORT_ENV})."
+        ),
     )
     parser.add_argument(
         "--theme",
         choices=["cyberpunk", "classic"],
-        help="Color theme (default: cyberpunk). Also configurable via CODIGNITY_TUI_THEME.",
+        help="Color theme (default: cyberpunk). Also configurable via BEDROCK_TUI_THEME.",
     )
 
     args = parser.parse_args(argv)

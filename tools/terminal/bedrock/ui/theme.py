@@ -1,4 +1,4 @@
-"""Theme constants for Codignity TUI.
+"""Theme constants for Bedrock TUI.
 
 The TUI aims for a readable, high-contrast "control deck" look (cyberpunk/CRT)
 while keeping compatibility with basic 8-color terminals.
@@ -43,8 +43,9 @@ COLOR_TITLE = 11
 COLOR_BORDER = 12
 COLOR_PANEL = 13
 
-# Theme selection (environment variable; see `codignity_tui.py --help`).
-THEME_ENV = "CODIGNITY_TUI_THEME"
+# Theme selection (environment variable; see `bedrock_tui.py --help`).
+THEME_ENV = "BEDROCK_TUI_THEME"
+THEME_ENV_LEGACY = "CODIGNITY_TUI_THEME"
 THEME_DEFAULT = "cyberpunk"
 
 
@@ -65,7 +66,12 @@ def init_colors(theme: str | None = None) -> bool:
         # Some curses builds/terms don't support default colors.
         pass
 
-    theme_name = (theme or os.environ.get(THEME_ENV, THEME_DEFAULT)).strip().lower()
+    theme_name = (
+        theme
+        or os.environ.get(THEME_ENV)
+        or os.environ.get(THEME_ENV_LEGACY)
+        or THEME_DEFAULT
+    ).strip().lower()
     if theme_name not in ("cyberpunk", "classic"):
         theme_name = THEME_DEFAULT
 

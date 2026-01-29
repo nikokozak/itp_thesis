@@ -1,7 +1,7 @@
-"""Serial session management for Codignity nodes.
+"""Serial session management for Bedrock nodes.
 
 This module provides the SerialSession class for communicating with ESP32forth
-devices running Codignity firmware. It handles the quirks of ESP32 serial:
+devices running Bedrock firmware. It handles the quirks of ESP32 serial:
 - Port-open reset behavior
 - Quiet settle period to avoid interrupting autoexec
 - DTR/RTS line management
@@ -118,7 +118,7 @@ def _looks_repl_error(buf: bytes) -> bool:
 def _find_line_marker(buf: bytes | bytearray, marker: bytes) -> int | None:
     """Find a marker that must appear as a full line.
 
-    The Codignity protocol terminator is the line exactly '! end'. Using a raw
+    The Bedrock protocol terminator is the line exactly '! end'. Using a raw
     substring search risks false positives if '! end' appears inside payload
     (e.g., in `source` output). This helper only matches when:
       - the marker starts at buffer start or after a newline, AND
@@ -149,7 +149,7 @@ def _find_line_marker(buf: bytes | bytearray, marker: bytes) -> int | None:
 
 
 class SerialSession:
-    """Manages a serial connection to an ESP32forth/Codignity device.
+    """Manages a serial connection to an ESP32forth/Bedrock device.
 
     Usage:
         session = SerialSession.open(port="/dev/cu.usbserial-0001")
@@ -181,7 +181,7 @@ class SerialSession:
         settle_s: float = 5.0,
         quiet: bool = True,
     ) -> "SerialSession":
-        """Open a serial session to a Codignity device.
+        """Open a serial session to a Bedrock device.
 
         Args:
             port: Serial port path. Auto-detected if None.

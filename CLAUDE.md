@@ -1,6 +1,6 @@
-# Thesis Repository (Codignity)
+# Thesis Repository (Bedrock Protocol)
 
-This repo contains the Codignity firmware and tooling for ESP32-based sensor nodes.
+This repo contains the Bedrock firmware and tooling for ESP32-based sensor nodes.
 
 ## Current Work
 
@@ -10,7 +10,7 @@ Protocol reference: `PROTOCOL_REFERENCE.md`
 
 ## Directory Structure
 
-- `firmware/esp32/` — Forth source for Codignity (`codignity.fs`)
+- `firmware/esp32/` — Forth source for Bedrock (`bedrock.fs`)
 - `tools/terminal/` — Python CLI/TUI tooling (Milestone C target)
 - `tools/terminal/transcripts/` — Session transcripts (regression artifacts)
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 
 Run from repo root:
 ```bash
-.venv/bin/python tools/terminal/codignity_cli.py <subcommand>
+.venv/bin/python tools/terminal/bedrock_cli.py <subcommand>
 ```
 
 ### Key Constraints (ESP32 Serial)
@@ -47,24 +47,24 @@ Run from repo root:
 
 **DO NOT, UNDER ANY CIRCUMSTANCES, CHANGE OR REFACTOR EXISTING CODE.**
 
-Existing code (e.g., `codignity_serial.py`) works perfectly. If something doesn't work, it is likely being used incorrectly. Add new code alongside existing code; do not refactor or "improve" what already works.
+Existing code (e.g., `bedrock_serial.py`) works perfectly. If something doesn't work, it is likely being used incorrectly. Add new code alongside existing code; do not refactor or "improve" what already works.
 
 ### CLI Features (Milestone C)
 
-The CLI (`codignity_cli.py`) provides:
+The CLI (`bedrock_cli.py`) provides:
 - `probe` — Identify node, show id/role/ver/mode
 - `load [--persist]` — Load firmware, optionally safe-save + restart
-- `define` — Add Forth word, captures to `.codignity/defs/<node_id>.defs`
+- `define` — Add Forth word, captures to `.bedrock/defs/<node_id>.defs`
 - `snapshot create/restore/diff` — Node state backup/restore
 - `meta/history/source/explain/validate` — Protocol inspection commands
 
-**Define capture**: Every successful `define` appends to `.codignity/defs/<node_id>.defs` (gitignored). Snapshot create loads these automatically.
+**Define capture**: Every successful `define` appends to `.bedrock/defs/<node_id>.defs` (gitignored). Snapshot create loads these automatically.
 
-**Diff noise suppression**: `snapshot diff` filters out core firmware defs by parsing `codignity.fs` as baseline.
+**Diff noise suppression**: `snapshot diff` filters out core firmware defs by parsing `bedrock.fs` as baseline.
 
 ### TUI
 
-The TUI (`codignity_tui.py`) provides ncurses interface with:
+The TUI (`bedrock_tui.py`) provides ncurses interface with:
 - ASCII banner, status bar, log pane
 - Menu for probe/meta/history/source/validate/clear/quit
 - Threaded I/O for non-blocking serial

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Codignity CLI - Command-line interface for Codignity nodes.
+"""Bedrock CLI - Command-line interface for Bedrock Protocol nodes.
 
 Run from repo root:
-    .venv/bin/python tools/terminal/codignity_cli.py <subcommand> [options]
+    .venv/bin/python tools/terminal/bedrock_cli.py <subcommand> [options]
 
 Examples:
-    codignity_cli.py probe
-    codignity_cli.py send "?"
-    codignity_cli.py meta dump
-    codignity_cli.py define ": foo 123 ;"
+    bedrock_cli.py probe
+    bedrock_cli.py send "?"
+    bedrock_cli.py meta dump
+    bedrock_cli.py define ": foo 123 ;"
 """
 
 from __future__ import annotations
@@ -20,13 +20,13 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-# Ensure the codignity package is importable when run from repo root
+# Ensure the bedrock package is importable when run from repo root
 _this_dir = Path(__file__).parent
 if str(_this_dir) not in sys.path:
     sys.path.insert(0, str(_this_dir))
 
-from codignity.session import SerialSession, SerialError
-from codignity.protocol import (
+from bedrock.session import SerialSession, SerialError
+from bedrock.protocol import (
     probe,
     ProbeResult,
     ensure_protocol,
@@ -34,8 +34,8 @@ from codignity.protocol import (
     parse_meta_dump,
     is_error,
 )
-from codignity.transcript import Transcript, NullTranscript
-from codignity.snapshot import (
+from bedrock.transcript import Transcript, NullTranscript
+from bedrock.snapshot import (
     Snapshot,
     SnapshotDiff,
     compute_diff,
@@ -43,22 +43,22 @@ from codignity.snapshot import (
     extract_def_name,
     load_baseline_defs,
 )
-from codignity.defs_log import (
+from bedrock.defs_log import (
     append_define,
     load_defs,
     load_defs_from_file,
     merge_defs,
 )
-from codignity.pins import (
+from bedrock.pins import (
     PinState,
     parse_pins_response,
     parse_pin_kv,
     parse_pin_value_response,
 )
-from codignity.boards import get_manifest, list_boards, BoardManifest
+from bedrock.boards import get_manifest, list_boards, BoardManifest
 
 if TYPE_CHECKING:
-    from codignity.transcript import Transcript as TranscriptType
+    from bedrock.transcript import Transcript as TranscriptType
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -107,7 +107,7 @@ def print_probe_result(result: ProbeResult, as_json: bool = False) -> None:
 
     print(f"Port: {result.port}")
     print(f"Mode: {result.mode}")
-    print(f"Codignity loaded: {result.codignity_loaded}")
+    print(f"Bedrock loaded: {result.bedrock_loaded}")
     if result.node_id:
         print(f"Node ID: {result.node_id}")
     if result.role:
@@ -205,7 +205,7 @@ def cmd_meta(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -273,7 +273,7 @@ def cmd_define(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -334,7 +334,7 @@ def cmd_simple_protocol(args: argparse.Namespace, command: str) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -376,14 +376,14 @@ def cmd_identity(args: argparse.Namespace) -> int:
 
 
 def cmd_load(args: argparse.Namespace) -> int:
-    """Handle the `load` subcommand - load Codignity firmware."""
+    """Handle the `load` subcommand - load Bedrock firmware."""
     # Resolve firmware path relative to repo root
     if args.file:
         firmware_path = Path(args.file)
     else:
-        # Default: firmware/esp32/codignity.fs relative to repo root
+        # Default: firmware/esp32/bedrock.fs relative to repo root
         repo_root = _this_dir.parent.parent
-        firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+        firmware_path = repo_root / "firmware" / "esp32" / "bedrock.fs"
 
     if not firmware_path.exists():
         print(f"Error: Firmware file not found: {firmware_path}", file=sys.stderr)
@@ -526,7 +526,7 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -557,7 +557,7 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
                 node_id = identity.get("id", "unknown")
                 base_defs = load_defs(node_id)
                 if base_defs:
-                    print(f"  Loaded {len(base_defs)} defs from .codignity/defs/{node_id}.defs")
+                    print(f"  Loaded {len(base_defs)} defs from .bedrock/defs/{node_id}.defs")
 
                 # Merge with --defs file if provided
                 override_defs: list[str] = []
@@ -641,7 +641,7 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
     # Confirm unless --yes
     if not args.yes:
         print("\nThis will:")
-        print("  1. Load Codignity firmware (interrupts autoexec)")
+        print("  1. Load Bedrock firmware (interrupts autoexec)")
         print("  2. Apply all meta set commands")
         print("  3. Apply all define commands")
         print("  4. Validate")
@@ -681,9 +681,9 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
 
                 session.drain(0.2)
 
-                # Step 2: Load Codignity firmware
+                # Step 2: Load Bedrock firmware
                 repo_root = _this_dir.parent.parent
-                firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+                firmware_path = repo_root / "firmware" / "esp32" / "bedrock.fs"
 
                 if not firmware_path.exists():
                     print(f"Error: Firmware not found: {firmware_path}", file=sys.stderr)
@@ -815,7 +815,7 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
             print(f"  Node ID: {result.node_id or 'unknown'}")
             print(f"  Role: {result.role or 'unknown'}")
             print(f"  Mode: {result.mode}")
-            print(f"  Codignity loaded: {result.codignity_loaded}")
+            print(f"  Bedrock loaded: {result.bedrock_loaded}")
 
         return 0
 
@@ -848,7 +848,7 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -878,11 +878,11 @@ def cmd_snapshot_diff(args: argparse.Namespace) -> int:
                             live_defs_all.append(parts[0])
 
                 # Diff noise suppression:
-                # - "Core firmware" means Codignity's shipped words (derived from local `firmware/esp32/codignity.fs`),
+                # - "Core firmware" means Bedrock's shipped words (derived from local `firmware/esp32/bedrock.fs`),
                 #   not ESP32forth kernel words.
                 # - This keeps `snapshot diff` focused on user-defined words.
                 repo_root = _this_dir.parent.parent
-                firmware_path = repo_root / "firmware" / "esp32" / "codignity.fs"
+                firmware_path = repo_root / "firmware" / "esp32" / "bedrock.fs"
                 baseline_defs = load_baseline_defs(firmware_path)
 
                 if baseline_defs:
@@ -957,7 +957,7 @@ def _format_pin_cell(
     selected_gpio: int | None,
 ) -> str:
     """Format a single pin cell for footprint display."""
-    from codignity.boards import PinDef
+    from bedrock.boards import PinDef
 
     if pin_def is None:
         return " " * 22
@@ -1026,7 +1026,7 @@ def cmd_pins(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -1100,7 +1100,7 @@ def cmd_pin_status(args: argparse.Namespace) -> int:
                 if not ensure_protocol(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter protocol mode.\n"
-                        "Is Codignity loaded? Try `probe` first.",
+                        "Is Bedrock loaded? Try `probe` first.",
                         file=sys.stderr,
                     )
                     return 1
@@ -1277,7 +1277,7 @@ def cmd_pin_trace(args: argparse.Namespace) -> int:
         out_path = Path(args.out)
     else:
         repo_root = _this_dir.parent.parent
-        out_dir = repo_root / ".codignity" / "traces"
+        out_dir = repo_root / ".bedrock" / "traces"
         stamp = time.strftime("%Y%m%d-%H%M%S")
         pin_label = str(args.pin).replace("/", "_")
         out_path = out_dir / f"pin-{pin_label}-{stamp}.csv"
@@ -1384,7 +1384,7 @@ def cmd_pin_trace(args: argparse.Namespace) -> int:
 
                 # Write CSV
                 with open(out_path, "w", encoding="utf-8") as f:
-                    f.write("# Codignity pin trace\n")
+                    f.write("# Bedrock pin trace\n")
                     f.write(f"# port: {session.port}\n")
                     f.write(f"# pin: {args.pin} (gpio {pin_state.gpio})\n")
                     f.write(f"# seconds: {seconds}\n")
@@ -1479,7 +1479,7 @@ def cmd_pin_mode(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Codignity CLI - Command-line interface for Codignity nodes.",
+        description="Bedrock CLI - Command-line interface for Bedrock nodes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1544,12 +1544,12 @@ def main(argv: list[str] | None = None) -> int:
     p_identity.set_defaults(func=cmd_identity)
 
     # load
-    p_load = subparsers.add_parser("load", help="Load Codignity firmware onto device")
+    p_load = subparsers.add_parser("load", help="Load Bedrock firmware onto device")
     add_common_args(p_load)
     p_load.add_argument(
         "--file",
         type=Path,
-        help="Firmware file path (default: firmware/esp32/codignity.fs)",
+        help="Firmware file path (default: firmware/esp32/bedrock.fs)",
     )
     p_load.add_argument(
         "--persist",
@@ -1573,7 +1573,7 @@ def main(argv: list[str] | None = None) -> int:
     p_snap_create.add_argument(
         "--out", "-o",
         required=True,
-        help="Output snapshot file path (.cdsnap)",
+        help="Output snapshot file path (.brsnap)",
     )
     p_snap_create.add_argument(
         "--defs",
@@ -1668,7 +1668,7 @@ def main(argv: list[str] | None = None) -> int:
     p_pin_trace.add_argument(
         "--out",
         type=Path,
-        help="Output CSV path (default: .codignity/traces/pin-<pin>-<timestamp>.csv).",
+        help="Output CSV path (default: .bedrock/traces/pin-<pin>-<timestamp>.csv).",
     )
     p_pin_trace.add_argument(
         "--mode",

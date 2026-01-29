@@ -1,7 +1,7 @@
-"""Codignity protocol handling: probe, mode detection, command parsing.
+"""Bedrock protocol handling: probe, mode detection, command parsing.
 
 This module provides functions for detecting whether a device is running
-Codignity, probing its identity, and parsing protocol responses.
+Bedrock, probing its identity, and parsing protocol responses.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from .session import SerialSession, SerialError, SerialTimeoutError, MARKER_OK, 
 
 @dataclass
 class ProbeResult:
-    """Result of probing a Codignity node."""
+    """Result of probing a Bedrock node."""
 
     port: str
     mode: Literal["repl", "protocol", "unknown"]
-    codignity_loaded: bool
+    bedrock_loaded: bool
     node_id: str | None = None
     role: str | None = None
     ver: str | None = None
@@ -35,7 +35,7 @@ class ProbeResult:
         return {
             "port": self.port,
             "mode": self.mode,
-            "codignity_loaded": self.codignity_loaded,
+            "bedrock_loaded": self.bedrock_loaded,
             "node_id": self.node_id,
             "role": self.role,
             "ver": self.ver,
@@ -96,10 +96,10 @@ def is_error(response: str) -> tuple[bool, str | None]:
 
 
 def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
-    """Probe a device to detect Codignity and get its identity.
+    """Probe a device to detect Bedrock and get its identity.
 
     Algorithm:
-    1. Try `meta id` (protocol command) - if responds with `! end`, Codignity is loaded
+    1. Try `meta id` (protocol command) - if responds with `! end`, Bedrock is loaded
     2. If timeout, try `revive` (REPL command) to enter protocol mode
     3. If revive succeeds, try `?` to get identity
     4. Fall back to checking plain REPL mode
@@ -116,7 +116,7 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
     # Try protocol probe first: `meta id`
     try:
         response = session.send_protocol("meta id", timeout_s)
-        # Success - we're in protocol mode with Codignity loaded
+        # Success - we're in protocol mode with Bedrock loaded
         identity = parse_identity(response)
 
         # Get full identity with `?`
@@ -133,7 +133,7 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
         session.drain(0.3)
 
     # Protocol probe failed - try REPL mode
-    # First, try `revive` to enter protocol mode (Codignity loaded but in REPL)
+    # First, try `revive` to enter protocol mode (Bedrock loaded but in REPL)
     try:
         session.send_line("revive")
         result = session.read_until(MARKER_OK, timeout_s)
@@ -149,7 +149,7 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
                 return ProbeResult(
                     port=port,
                     mode="repl",
-                    codignity_loaded=True,
+                    bedrock_loaded=True,
                 )
     except SerialError:
         pass
@@ -157,7 +157,7 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
     # Drain buffer before next attempt
     session.drain(0.3)
 
-    # Check if we're in plain REPL mode (ESP32forth without Codignity)
+    # Check if we're in plain REPL mode (ESP32forth without Bedrock)
     try:
         session.send_line("sp0 sp!")  # Safe no-op that resets stack
         result = session.read_until(MARKER_OK, timeout_s)
@@ -165,7 +165,7 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
             return ProbeResult(
                 port=port,
                 mode="repl",
-                codignity_loaded=False,
+                bedrock_loaded=False,
             )
     except SerialError:
         pass
@@ -174,14 +174,14 @@ def probe(session: SerialSession, timeout_s: float = 3.0) -> ProbeResult:
     return ProbeResult(
         port=port,
         mode="unknown",
-        codignity_loaded=False,
+        bedrock_loaded=False,
     )
 
 
 def _build_probe_result(
     port: str,
     mode: Literal["repl", "protocol", "unknown"],
-    codignity_loaded: bool,
+    bedrock_loaded: bool,
     identity: dict[str, str],
 ) -> ProbeResult:
     """Build a ProbeResult from parsed identity."""
@@ -202,7 +202,7 @@ def _build_probe_result(
     return ProbeResult(
         port=port,
         mode=mode,
-        codignity_loaded=codignity_loaded,
+        bedrock_loaded=bedrock_loaded,
         node_id=identity.get("id"),
         role=identity.get("role"),
         ver=identity.get("ver"),
@@ -218,7 +218,7 @@ def _build_probe_result(
 def ensure_protocol(session: SerialSession, timeout_s: float = 3.0) -> bool:
     """Ensure the device is in protocol mode.
 
-    If Codignity is loaded but in REPL mode, sends `revive` to enter protocol mode.
+    If Bedrock is loaded but in REPL mode, sends `revive` to enter protocol mode.
 
     Args:
         session: An open SerialSession.
@@ -235,7 +235,7 @@ def ensure_protocol(session: SerialSession, timeout_s: float = 3.0) -> bool:
         # Drain any leftover response
         session.drain(0.3)
 
-    # Try revive (Codignity loaded but in REPL mode)
+    # Try revive (Bedrock loaded but in REPL mode)
     try:
         session.send_line("revive")
         result = session.read_until(MARKER_OK, timeout_s)

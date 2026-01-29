@@ -4,7 +4,7 @@
 
 ---
 
-## Project: Computational Dignity
+## Project: Bedrock Protocol
 
 Self-describing embedded systems that contain everything needed to be understood, modified, and maintained forever. No cloud, no IDE, no external dependencies.
 

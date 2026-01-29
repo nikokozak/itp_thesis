@@ -1,6 +1,6 @@
 # Roadmap (Prioritized)
 
-This is a working implementation plan for the thesis “Computational Dignity”. The goal is to reach a **reliable
+This is a working implementation plan for the thesis “Bedrock Protocol”. The goal is to reach a **reliable
 demo** first, then deepen capability without adding bloat.
 
 ## Milestone A — Unbrickable Prototype (highest priority)
@@ -25,7 +25,7 @@ breaking it with `define`.
 
 **Goal:** The node explains itself from its own stored state, not from hardcoded strings.
 
-Implementation plan: (completed; see `firmware/esp32/codignity.fs` and transcripts)
+Implementation plan: (completed; see `firmware/esp32/bedrock.fs` and transcripts)
 
 1. **Metadata model**
    - Minimal, explicit fields (e.g., `node-id`, `role`, `pins`, `sample-units`, `children`).

@@ -18,16 +18,16 @@ mkdir -p "$(dirname "$OUT")"
   printf "# Commit: %s\n" "$commit"
   printf "# Port: %s\n" "$PORT"
   printf "\n## Setup\n"
-  printf "%s\n" "- Starts by loading \`firmware/esp32/codignity.fs\` (muted; waits for \`ok\` per line)."
+  printf "%s\n" "- Starts by loading \`firmware/esp32/bedrock.fs\` (muted; waits for \`ok\` per line)."
   printf "%s\n" "- Then runs protocol commands (each ends with \`! end\`)."
 } >"$OUT"
 
-tmp="$(mktemp -t codignity-milestone-b.XXXXXX)"
+tmp="$(mktemp -t bedrock-milestone-b.XXXXXX)"
 trap 'rm -f "$tmp"' EXIT
 cat >"$tmp" <<'EOF'
 # mute on
 # until ok
-# include firmware/esp32/codignity.fs
+# include firmware/esp32/bedrock.fs
 # mute off
 # until end
 meta id node1
@@ -49,7 +49,7 @@ EOF
 
 {
   printf "\n## Commands + Output\n"
-  .venv/bin/python tools/terminal/codignity_serial.py \
+  .venv/bin/python tools/terminal/bedrock_serial.py \
     --port "$PORT" \
     --until ok \
     --timeout 12 \
