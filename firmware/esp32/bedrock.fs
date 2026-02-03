@@ -717,7 +717,7 @@ variable br-flags-len
       2drop
       \ Check if input-only pin
       gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
-      gpio OUTPUT pinMode
+      gpio INPUT OUTPUT + pinMode
       2 gpio br-pin-mode!
     else
       2drop s" pin_mode_invalid" br.#err br.!end exit
@@ -773,7 +773,7 @@ variable br-flags-len
   gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
   \ Writes are output semantics: ensure OUTPUT mode unless already out.
   gpio br-pin-mode@ 2 <> if
-    gpio OUTPUT pinMode
+    gpio INPUT OUTPUT + pinMode
     2 gpio br-pin-mode!
   then
   \ Parse value

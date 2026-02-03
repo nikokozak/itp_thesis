@@ -4,6 +4,8 @@ The TUI aims for a readable, high-contrast "control deck" look (cyberpunk/CRT)
 while keeping compatibility with basic 8-color terminals.
 """
 
+from __future__ import annotations
+
 import curses
 import os
 
@@ -141,5 +143,5 @@ KEY_HINTS = {
     "load_wizard": "Space Toggle  Enter Start  Esc Cancel",
     "snapshot_wizard": "Space Toggle  Enter Create  Esc Cancel",
     "restore_wizard": "Arrows Navigate  Enter Select/Restore  Esc Cancel",
-    "pins": "j/k Nav  c Claim  u Release  t Toggle  i In  o Out  r Refresh  Esc Back",
+    "pins": "j/k Nav  t Toggle level  i Input+PU  o Output  s Sample  c Claim  u Release  r Refresh  Esc Back",
 }

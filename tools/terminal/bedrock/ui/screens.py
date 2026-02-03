@@ -158,6 +158,10 @@ class AppState:
     pins_gpios: list = field(default_factory=list)  # Sorted list of GPIO numbers
     pins_loading: bool = False
     pins_action_gpio: int | None = None  # GPIO for pending action
+    pins_trace_running: bool = False
+    pins_trace_gpio: int | None = None
+    pins_trace_progress: float = 0.0
+    pins_trace_status: str = ""
 
 
 def create_main_menu(state: AppState) -> Menu:
@@ -625,6 +629,7 @@ def io_worker(state: AppState) -> None:
 
                 elif action == "pins":
                     from ..pins import parse_pins_response
+                    quiet = bool(args[0]) if args else False
                     session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
@@ -632,7 +637,146 @@ def io_worker(state: AppState) -> None:
 
                     response = session.send_protocol("pins", timeout_s=5.0)
                     board_id, pins_data = parse_pins_response(response)
-                    state.result_queue.put(("pins_ok", board_id, pins_data))
+                    state.result_queue.put(("pins_ok", board_id, pins_data, quiet))
+
+                elif action == "pin_trace":
+                    from ..pins import parse_pin_kv, parse_pin_value_response
+                    from pathlib import Path
+
+                    gpio = int(args[0])
+                    seconds = float(args[1]) if len(args) > 1 else 2.0
+                    hz = float(args[2]) if len(args) > 2 else 30.0
+
+                    if seconds <= 0:
+                        state.result_queue.put(("pin_trace_error", "seconds must be > 0"))
+                        continue
+                    if hz <= 0:
+                        state.result_queue.put(("pin_trace_error", "hz must be > 0"))
+                        continue
+
+                    interval_s = 1.0 / hz
+
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("pin_trace_error", "Could not enter protocol mode"))
+                        continue
+
+                    # Validate pin and refuse flash pins.
+                    response = session.send_protocol(f"pin-status {gpio}", timeout_s=3.0)
+                    has_err, err_msg = is_error(response)
+                    if has_err:
+                        state.result_queue.put(("pin_trace_error", f"pin-status failed: {err_msg}"))
+                        continue
+
+                    pin_state = None
+                    for line in response.splitlines():
+                        parsed = parse_pin_kv(line.strip())
+                        if parsed:
+                            pin_state = parsed
+                            break
+                    if pin_state is None:
+                        state.result_queue.put(("pin_trace_error", "Could not parse pin-status response"))
+                        continue
+                    if pin_state.is_flash():
+                        state.result_queue.put(("pin_trace_error", "Pin is marked as flash; refusing to sample"))
+                        continue
+
+                    # Resolve output path under repo_root/.bedrock/traces.
+                    repo_root = Path(__file__).resolve().parents[4]
+                    out_dir = repo_root / ".bedrock" / "traces"
+                    stamp = time.strftime("%Y%m%d-%H%M%S")
+                    out_path = out_dir / f"pin-GPIO{gpio}-{stamp}.csv"
+                    try:
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                    except OSError as exc:
+                        state.result_queue.put(("pin_trace_error", f"Could not create output directory: {exc}"))
+                        continue
+
+                    state.result_queue.put(("pin_trace_start", gpio, seconds, hz, str(out_path)))
+
+                    # Capture loop (best-effort timing).
+                    start = time.perf_counter()
+                    deadline = start + seconds
+                    next_tick = start
+                    last_report = start
+
+                    samples: list[tuple[float, int]] = []
+
+                    while True:
+                        now = time.perf_counter()
+                        if now >= deadline:
+                            break
+
+                        if now < next_tick:
+                            time.sleep(min(0.01, next_tick - now))
+                            continue
+
+                        resp = session.send_protocol(f"pin-read {gpio}", timeout_s=3.0)
+                        value = parse_pin_value_response(resp)
+                        if value is None:
+                            value = -1
+
+                        t_s = time.perf_counter() - start
+                        samples.append((t_s, int(value)))
+
+                        next_tick += interval_s
+                        if next_tick < now - interval_s:
+                            next_tick = now + interval_s
+
+                        if (now - last_report) >= 0.25:
+                            last_report = now
+                            pct = min(1.0, max(0.0, (now - start) / seconds))
+                            state.result_queue.put(("pin_trace_progress", gpio, pct, len(samples)))
+
+                    elapsed = max(1e-6, time.perf_counter() - start)
+                    eff_hz = len(samples) / elapsed
+
+                    # Write CSV (same format as CLI pin trace).
+                    try:
+                        with open(out_path, "w", encoding="utf-8") as f:
+                            f.write("# Bedrock pin trace\n")
+                            f.write(f"# port: {session.port}\n")
+                            f.write(f"# pin: GPIO{gpio} (gpio {pin_state.gpio})\n")
+                            f.write(f"# seconds: {seconds}\n")
+                            f.write(f"# target_hz: {hz}\n")
+                            f.write("t_s,value\n")
+                            for t_s, v in samples:
+                                f.write(f"{t_s:.6f},{v}\n")
+                    except OSError as exc:
+                        state.result_queue.put(("pin_trace_error", f"Could not write CSV: {exc}"))
+                        continue
+
+                    # Summary metrics.
+                    transitions = 0
+                    prev = None
+                    for _, v in samples:
+                        if v not in (0, 1):
+                            continue
+                        if prev is None:
+                            prev = v
+                            continue
+                        if v != prev:
+                            transitions += 1
+                            prev = v
+
+                    preview_n = 80
+                    preview = "".join(
+                        "1" if v == 1 else "0" if v == 0 else "?"
+                        for _, v in samples[:preview_n]
+                    )
+
+                    state.result_queue.put(
+                        (
+                            "pin_trace_ok",
+                            gpio,
+                            str(out_path),
+                            len(samples),
+                            elapsed,
+                            eff_hz,
+                            transitions,
+                            preview,
+                        )
+                    )
 
                 elif action == "pin_claim":
                     gpio = args[0]
@@ -649,7 +793,7 @@ def io_worker(state: AppState) -> None:
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} claimed by {owner}"))
                         # Refresh pins after action
-                        state.io_queue.put(("pins",))
+                        state.io_queue.put(("pins", True))
 
                 elif action == "pin_release":
                     gpio = args[0]
@@ -664,7 +808,7 @@ def io_worker(state: AppState) -> None:
                         state.result_queue.put(("pin_action_error", f"Release failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} released"))
-                        state.io_queue.put(("pins",))
+                        state.io_queue.put(("pins", True))
 
                 elif action == "pin_mode":
                     gpio = args[0]
@@ -684,7 +828,7 @@ def io_worker(state: AppState) -> None:
                         state.result_queue.put(("pin_action_error", f"Mode change failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} set to {mode}"))
-                        state.io_queue.put(("pins",))
+                        state.io_queue.put(("pins", True))
 
                 elif action == "pin_write":
                     gpio = args[0]
@@ -699,8 +843,8 @@ def io_worker(state: AppState) -> None:
                     if has_err:
                         state.result_queue.put(("pin_action_error", f"Write failed: {err_msg}"))
                     else:
-                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} = {value}"))
-                        state.io_queue.put(("pins",))
+                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} drive={value}"))
+                        state.io_queue.put(("pins", True))
 
             except SerialError as e:
                 # Serial error - close session so next command reconnects
@@ -882,11 +1026,66 @@ def process_results(state: AppState) -> None:
         elif result_type == "pins_ok":
             board_id = result[1]
             pins_data = result[2]
+            quiet = bool(result[3]) if len(result) > 3 else False
             state.pins_data = pins_data
             state.pins_board_id = board_id
             state.pins_gpios = sorted(pins_data.keys())
             state.pins_loading = False
-            state.log.append(f"Pins loaded ({len(pins_data)} GPIOs)", COLOR_SUCCESS)
+            if not quiet:
+                state.log.append(f"Pins refreshed ({len(pins_data)} GPIOs)", COLOR_SUCCESS)
+
+        elif result_type == "pin_trace_start":
+            gpio = int(result[1])
+            seconds = float(result[2])
+            hz = float(result[3])
+            out_path = result[4]
+
+            state.pins_trace_running = True
+            state.pins_trace_gpio = gpio
+            state.pins_trace_progress = 0.0
+            state.pins_trace_status = f"Tracing GPIO{gpio}..."
+            state.log.append(f"Tracing GPIO{gpio} for {seconds:.1f}s @ {hz:.0f}Hz -> {out_path}", COLOR_DIM)
+
+        elif result_type == "pin_trace_progress":
+            gpio = int(result[1])
+            pct = float(result[2])
+            samples = int(result[3])
+            state.pins_trace_gpio = gpio
+            state.pins_trace_progress = pct
+            state.pins_trace_status = f"Tracing GPIO{gpio}... ({samples} samples)"
+
+        elif result_type == "pin_trace_ok":
+            gpio = int(result[1])
+            out_path = result[2]
+            samples = int(result[3])
+            elapsed = float(result[4])
+            eff_hz = float(result[5])
+            transitions = int(result[6])
+            preview = result[7]
+
+            state.pins_trace_running = False
+            state.pins_trace_gpio = None
+            state.pins_trace_progress = 0.0
+            state.pins_trace_status = ""
+
+            state.log.append(
+                f"Trace saved: GPIO{gpio} -> {out_path} ({samples} samples in {elapsed:.2f}s, {eff_hz:.1f}Hz eff, {transitions} edges)",
+                COLOR_SUCCESS,
+            )
+            if preview:
+                state.log.append(f"  preview: {preview}", COLOR_DIM)
+
+            # Refresh pin data after sampling.
+            state.pins_loading = True
+            state.io_queue.put(("pins", False))
+
+        elif result_type == "pin_trace_error":
+            err_msg = result[1]
+            state.pins_trace_running = False
+            state.pins_trace_gpio = None
+            state.pins_trace_progress = 0.0
+            state.pins_trace_status = ""
+            state.log.append(f"Trace failed: {err_msg}", COLOR_ERROR)
 
         elif result_type == "pin_action_ok":
             message = result[1]
@@ -1161,10 +1360,13 @@ def handle_pins_input(state: AppState, key: int) -> None:
 
     if key == 27:  # Escape
         state.screen = Screen.HOME
+    elif state.pins_trace_running:
+        # Ignore input while tracing (best-effort; Esc still works).
+        return
     elif key == ord("r") or key == ord("R"):
         # Refresh pins
         state.pins_loading = True
-        state.io_queue.put(("pins",))
+        state.io_queue.put(("pins", False))
     elif key == curses.KEY_UP or key == ord("k"):
         # Move selection up
         if state.pins_gpios and state.pins_selected > 0:
@@ -1191,8 +1393,17 @@ def handle_pins_input(state: AppState, key: int) -> None:
         # Release/unclaim selected pin
         if selected_gpio is not None:
             state.io_queue.put(("pin_release", selected_gpio))
+    elif key == ord("s") or key == ord("S"):
+        # Capture a short host-side time series using repeated pin-read calls.
+        if selected_gpio is not None:
+            state.pins_trace_running = True
+            state.pins_trace_gpio = selected_gpio
+            state.pins_trace_progress = 0.0
+            state.pins_trace_status = f"Tracing GPIO{selected_gpio}..."
+            state.log.append(f"Tracing GPIO{selected_gpio}...", COLOR_DIM)
+            state.io_queue.put(("pin_trace", selected_gpio, 2.0, 30.0))
     elif key == ord("t") or key == ord("T"):
-        # Toggle pin (read then write opposite)
+        # Toggle drive level (0 <-> 1).
         if selected_gpio is not None:
             pin_state = state.pins_data.get(selected_gpio)
             if pin_state:
@@ -1292,7 +1503,7 @@ def execute_action(state: AppState, action: Action | None) -> None:
         # Open Pins Inspector screen and fetch pin data
         state.pins_loading = True
         state.screen = Screen.PINS
-        state.io_queue.put(("pins",))
+        state.io_queue.put(("pins", False))
 
 
 def execute_confirmed_action(state: AppState, action: Action) -> None:
@@ -1383,7 +1594,11 @@ def draw_help(win: curses.window, state: AppState) -> None:
     row += 1
     add_binding(row, "j/k", "Move   r Refresh   Esc Back", COLOR_PROMPT)
     row += 1
-    add_binding(row, "c/u", "Claim / Release   i/o/t In / Out / Toggle", COLOR_PROMPT)
+    add_binding(row, "t", "Toggle drive level (0<->1)", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "i/o", "Mode: Input (pull-up) / Output", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "c/u/s", "Claim / Release / Sample (pin-read trace)", COLOR_PROMPT)
     row += 1
     add_binding(row, "Legend", "X flash  ! strapping  I input-only  S safe", COLOR_DIM)
 
@@ -1744,10 +1959,15 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             )
 
         # Instructions
+        if state.pins_trace_running and state.pins_trace_gpio is not None:
+            pct = int(state.pins_trace_progress * 100.0)
+            instr = f"Tracing GPIO{state.pins_trace_gpio}... {pct:3d}%  (please wait)  Esc Back"
+        else:
+            instr = "j/k Move   t Toggle level   i Input+PU   o Output   s Sample   c Claim   u Release   r Refresh   Esc Back"
         win.addstr(
             y + inner_h - 1,
             x,
-            "j/k Move   t Toggle   i/o Mode   c Claim   u Release   r Refresh   Esc Back"[:inner_w].ljust(inner_w),
+            instr[:inner_w].ljust(inner_w),
             curses.color_pair(COLOR_DIM) | curses.A_DIM,
         )
 
