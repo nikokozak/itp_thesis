@@ -498,6 +498,8 @@ create br-pin-mode br-pin-max allot
 create br-pin-pull br-pin-max allot
 \ Flags bitmask: 1=safe, 2=strapping, 4=input-only, 8=flash
 create br-pin-flags br-pin-max allot
+\ Drive value: 0/1 when last written (meaningful for mode=out)
+create br-pin-drive br-pin-max allot
 \ Owner: 8 bytes per pin (length byte + 7 chars)
 8 constant br-pin-owner-max
 create br-pin-owner br-pin-max br-pin-owner-max * allot
@@ -508,6 +510,8 @@ create br-pin-owner br-pin-max br-pin-owner-max * allot
 : br-pin-pull! ( pull gpio -- ) br-pin-pull + c! ;
 : br-pin-flags@ ( gpio -- flags ) br-pin-flags + c@ ;
 : br-pin-flags! ( flags gpio -- ) br-pin-flags + c! ;
+: br-pin-drive@ ( gpio -- v ) br-pin-drive + c@ ;
+: br-pin-drive! ( v gpio -- ) br-pin-drive + c! ;
 : br-pin-owner-addr ( gpio -- a ) br-pin-owner-max * br-pin-owner + ;
 : br-pin-owner@ ( gpio -- a n ) br-pin-owner-addr dup c@ swap 1+ swap ;
 : br-pin-owner! ( a n gpio -- )
@@ -523,6 +527,7 @@ create br-pin-owner br-pin-max br-pin-owner-max * allot
     0 i br-pin-mode!
     0 i br-pin-pull!
     0 i br-pin-flags!
+    0 i br-pin-drive!
     i br-pin-owner-clear
   loop
   \ Mark known ESP32 constraints
@@ -643,6 +648,13 @@ variable br-flags-len
 : br.!pin ( gpio -- )
   ." ! pin gpio=" dup . space
   ." mode=" dup br-pin-mode@ br-mode$ type space
+  ." drive="
+  dup br-pin-mode@ 2 = if
+    dup br-pin-drive@ .
+  else
+    ." - "
+  then
+  space
   ." level="
   dup br-pin-readable? if
     dup digitalRead .
@@ -717,7 +729,7 @@ variable br-flags-len
       2drop
       \ Check if input-only pin
       gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
-      gpio INPUT OUTPUT + pinMode
+      gpio OUTPUT pinMode
       2 gpio br-pin-mode!
     else
       2drop s" pin_mode_invalid" br.#err br.!end exit
@@ -773,17 +785,17 @@ variable br-flags-len
   gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
   \ Writes are output semantics: ensure OUTPUT mode unless already out.
   gpio br-pin-mode@ 2 <> if
-    gpio INPUT OUTPUT + pinMode
+    gpio OUTPUT pinMode
     2 gpio br-pin-mode!
   then
   \ Parse value
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   2dup s" 0" str= if
-    2drop gpio 0 digitalWrite
+    2drop 0 gpio br-pin-drive! gpio 0 digitalWrite
   else
     2dup s" 1" str= if
-      2drop gpio 1 digitalWrite
+      2drop 1 gpio br-pin-drive! gpio 1 digitalWrite
     else
       2drop s" pin_value_invalid" br.#err br.!end exit
     then

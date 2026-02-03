@@ -15,6 +15,7 @@ class PinState:
 
     gpio: int
     mode: str = "unknown"  # unknown, in, out, adc, i2c, uart, pwm, reserved
+    drive: int | None = None  # 0, 1, or None if not meaningful/unknown
     level: int | None = None  # 0, 1, or None if unreadable
     pull: str = "none"  # none, up, down
     owner: str | None = None
@@ -74,6 +75,14 @@ def parse_pin_kv(line: str) -> PinState | None:
     except ValueError:
         return None
 
+    # Parse drive (optional)
+    drive = None
+    if "drive" in data and data["drive"] != "-":
+        try:
+            drive = int(data["drive"])
+        except ValueError:
+            pass
+
     # Parse level
     level = None
     if "level" in data and data["level"] != "-":
@@ -97,6 +106,7 @@ def parse_pin_kv(line: str) -> PinState | None:
     return PinState(
         gpio=gpio,
         mode=data.get("mode", "unknown"),
+        drive=drive,
         level=level,
         pull=data.get("pull", "none"),
         owner=owner,

@@ -1410,11 +1410,19 @@ def handle_pins_input(state: AppState, key: int) -> None:
                 # Safety check: refuse to toggle strapping/flash pins
                 if pin_state.is_strapping() or pin_state.is_flash():
                     state.log.append(f"GPIO{selected_gpio} is dangerous (strapping/flash)", COLOR_ERROR)
-                elif pin_state.level is not None:
-                    new_value = 1 - pin_state.level
-                    state.io_queue.put(("pin_write", selected_gpio, new_value))
                 else:
-                    state.log.append(f"GPIO{selected_gpio} level unknown, cannot toggle", COLOR_ERROR)
+                    # Prefer toggling the commanded output ("drive") when in output mode,
+                    # since `digitalRead` may not reflect output latch on all boards/cores.
+                    if pin_state.mode == "out" and pin_state.drive is not None:
+                        new_value = 1 - pin_state.drive
+                        state.io_queue.put(("pin_write", selected_gpio, new_value))
+                    elif pin_state.level is not None:
+                        new_value = 1 - pin_state.level
+                        state.io_queue.put(("pin_write", selected_gpio, new_value))
+                    else:
+                        state.log.append(f"GPIO{selected_gpio} level unknown, cannot toggle", COLOR_ERROR)
+            else:
+                state.log.append(f"GPIO{selected_gpio} unknown, cannot toggle", COLOR_ERROR)
     elif key == ord("i") or key == ord("I"):
         # Set pin to input
         if selected_gpio is not None:
@@ -1915,7 +1923,10 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             for i, gpio in enumerate(state.pins_gpios[:visible_count]):
                 state_data = state.pins_data.get(gpio)
                 if state_data:
-                    level = state_data.level if state_data.level is not None else "-"
+                    shown = state_data.level
+                    if state_data.mode == "out" and state_data.drive is not None:
+                        shown = state_data.drive
+                    level = shown if shown is not None else "-"
                     owner = state_data.owner[:7] if state_data.owner else "-"
                     line = f"GPIO{gpio:02d}: M={state_data.mode[:3]:3s} L={level} O={owner}"
                 else:
@@ -1941,6 +1952,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
             )
 
+            drive = pin_state.drive if getattr(pin_state, "drive", None) is not None else "-"
             level = pin_state.level if pin_state.level is not None else "-"
             owner = pin_state.owner or "-"
             flags = ",".join(pin_state.flags) if pin_state.flags else "-"
@@ -1948,7 +1960,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             win.addstr(
                 detail_y + 2,
                 x,
-                f"Mode: {pin_state.mode}  Level: {level}  Pull: {pin_state.pull}"[:inner_w].ljust(inner_w),
+                f"Mode: {pin_state.mode}  Drive: {drive}  Level: {level}  Pull: {pin_state.pull}"[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_PANEL),
             )
             win.addstr(
@@ -1988,7 +2000,10 @@ def _format_pin_cell_tui(pin_def, pins_data: dict, selected_gpio: int | None) ->
     if state is None:
         return f"{pin_def.label:4s} G{gpio:02d} ?"
 
-    level = str(state.level) if state.level is not None else "-"
+    shown = state.level
+    if state.mode == "out" and state.drive is not None:
+        shown = state.drive
+    level = str(shown) if shown is not None else "-"
     mode_abbr = state.mode[0].upper() if state.mode else "?"
     owner = state.owner[:4] if state.owner else "-"
 
