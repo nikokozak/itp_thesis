@@ -1285,6 +1285,8 @@ def cmd_pin_trace(args: argparse.Namespace) -> int:
                     cmd = f"pin-mode {args.pin} {mode}"
                     if args.pull:
                         cmd += f" pull={args.pull}"
+                    if args.force:
+                        cmd += " force=1"
                     transcript.record_sent(cmd)
                     response = session.send_protocol(cmd, timeout_s=args.timeout)
                     transcript.record_received(response)
@@ -1401,6 +1403,8 @@ def cmd_pin_write(args: argparse.Namespace) -> int:
                     return 1
 
                 cmd = f"pin-write {args.pin} {args.value}"
+                if args.force:
+                    cmd += " force=1"
                 transcript.record_sent(cmd)
                 response = session.send_protocol(cmd, timeout_s=args.timeout)
                 transcript.record_received(response)
@@ -1434,6 +1438,8 @@ def cmd_pin_mode(args: argparse.Namespace) -> int:
                 cmd = f"pin-mode {args.pin} {args.mode}"
                 if args.pull:
                     cmd += f" pull={args.pull}"
+                if args.force:
+                    cmd += " force=1"
 
                 transcript.record_sent(cmd)
                 response = session.send_protocol(cmd, timeout_s=args.timeout)
@@ -1661,6 +1667,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional pull resistor config (implies --mode in if --mode omitted).",
     )
     p_pin_trace.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow strapping pins for the optional pre-trace pin-mode (sends force=1).",
+    )
+    p_pin_trace.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress progress output.",
@@ -1672,6 +1683,11 @@ def main(argv: list[str] | None = None) -> int:
     add_common_args(p_pin_write)
     p_pin_write.add_argument("pin", help="Pin identifier")
     p_pin_write.add_argument("value", choices=["0", "1"], help="Value to write (0 or 1)")
+    p_pin_write.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow writes to strapping pins (sends force=1).",
+    )
     p_pin_write.set_defaults(func=cmd_pin_write)
 
     # pin mode
@@ -1683,6 +1699,11 @@ def main(argv: list[str] | None = None) -> int:
         "--pull",
         choices=["up", "down", "none"],
         help="Pull resistor configuration",
+    )
+    p_pin_mode.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow configuration of strapping pins (sends force=1).",
     )
     p_pin_mode.set_defaults(func=cmd_pin_mode)
 

@@ -47,6 +47,28 @@ class ProbeResult:
         }
 
 
+def _normalize_marker_line(line: str) -> str:
+    """Normalize a noisy serial line into a protocol marker line.
+
+    Some serial monitors or device boot logs can prefix protocol output with
+    non-UTF8 noise or partial fragments. This helper tries to recover the
+    start of a Bedrock protocol line by locating the earliest `! ` or `#`.
+    """
+    line = line.strip()
+    if not line:
+        return ""
+
+    if line.startswith("! ") or line.startswith("#"):
+        return line
+
+    bang = line.find("! ")
+    hash_pos = line.find("#")
+    starts = [pos for pos in (bang, hash_pos) if pos != -1]
+    if not starts:
+        return ""
+    return line[min(starts) :]
+
+
 def parse_identity(response: str) -> dict[str, str]:
     """Parse identity response lines into key-value pairs.
 
@@ -63,7 +85,9 @@ def parse_identity(response: str) -> dict[str, str]:
     """
     result: dict[str, str] = {}
     for line in response.splitlines():
-        line = line.strip()
+        line = _normalize_marker_line(line)
+        if not line:
+            continue
         if line.startswith("! "):
             if line == "! end":
                 continue
@@ -87,7 +111,9 @@ def is_error(response: str) -> tuple[bool, str | None]:
         Tuple of (is_error, error_message).
     """
     for line in response.splitlines():
-        line = line.strip()
+        line = _normalize_marker_line(line)
+        if not line:
+            continue
         if line.startswith("# err "):
             return True, line[6:]
         if line.startswith("# "):
@@ -305,7 +331,9 @@ def parse_meta_dump(response: str) -> dict[str, str]:
     """
     result: dict[str, str] = {}
     for line in response.splitlines():
-        line = line.strip()
+        line = _normalize_marker_line(line)
+        if not line:
+            continue
         if line.startswith("! ") and line != "! end":
             parts = line[2:].split(None, 1)
             if len(parts) == 2:

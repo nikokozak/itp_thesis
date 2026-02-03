@@ -43,6 +43,25 @@ class PinState:
         return self.is_strapping() or self.is_flash()
 
 
+def _normalize_marker_line(line: str) -> str:
+    """Normalize a noisy serial line into a protocol marker line.
+
+    Serial boot logs or monitor quirks can prefix Bedrock protocol output with
+    junk characters. Recover protocol lines by locating the earliest `! ` or `#`.
+    """
+    line = line.strip()
+    if not line:
+        return ""
+    if line.startswith("! ") or line.startswith("#"):
+        return line
+    bang = line.find("! ")
+    hash_pos = line.find("#")
+    starts = [pos for pos in (bang, hash_pos) if pos != -1]
+    if not starts:
+        return ""
+    return line[min(starts) :]
+
+
 def parse_pin_kv(line: str) -> PinState | None:
     """Parse a single `! pin ...` line into a PinState.
 
@@ -55,6 +74,7 @@ def parse_pin_kv(line: str) -> PinState | None:
     Returns:
         PinState, or None if parsing fails.
     """
+    line = _normalize_marker_line(line)
     if not line.startswith("! pin "):
         return None
 
@@ -127,7 +147,9 @@ def parse_pins_response(text: str) -> tuple[str | None, dict[int, PinState]]:
     pins: dict[int, PinState] = {}
 
     for line in text.splitlines():
-        line = line.strip()
+        line = _normalize_marker_line(line)
+        if not line:
+            continue
 
         if line.startswith("! board "):
             board_id = line[8:].strip()
@@ -149,7 +171,9 @@ def parse_pin_value_response(text: str) -> int | None:
         The value (0 or 1), or None if parsing fails.
     """
     for line in text.splitlines():
-        line = line.strip()
+        line = _normalize_marker_line(line)
+        if not line:
+            continue
         if line.startswith("! value "):
             try:
                 return int(line[8:].strip())

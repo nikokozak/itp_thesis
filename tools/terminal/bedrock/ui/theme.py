@@ -11,10 +11,10 @@ import os
 
 # ASCII art banner
 BANNER = r"""
-   ______  ____  ____  _ ____ _   _ ___ _____ __   __
-  / ___/ / __ \|  _ \| |  _ \ | | |_ _|_   _|\ \ / /
- / /__ / / /_/ /| | | | | |_) | |_| || |  | |   \ V /
- \___//_/\____/ |_| |_|_|____/ \___/|___| |_|    |_|
+  ___  ___  ___  ___   ___   ___  _  __
+ | _ )| __||   \| _ \ / _ \ / __|| |/ /
+ | _ \| _| | |) |   /| (_) | (__ | ' <
+ |___/|___||___/|_|_\ \___/ \___||_|\_\
 """
 
 BANNER_LINES = [line for line in BANNER.strip().split("\n")]
@@ -143,5 +143,5 @@ KEY_HINTS = {
     "load_wizard": "Space Toggle  Enter Start  Esc Cancel",
     "snapshot_wizard": "Space Toggle  Enter Create  Esc Cancel",
     "restore_wizard": "Arrows Navigate  Enter Select/Restore  Esc Cancel",
-    "pins": "j/k Nav  t Toggle level  i Input+PU  o Output  s Sample  c Claim  u Release  r Refresh  Esc Back",
+    "pins": "j/k Nav  t Toggle drive  i Input+PU  o Output  a View  ! Arm  s Sample  c Claim  u Release  r Refresh  Esc Back",
 }

@@ -547,6 +547,9 @@ create br-pin-owner br-pin-max br-pin-owner-max * allot
 \ Pin token parsing: accept "4", "D4", "GPIO4" (case-insensitive)
 variable br-parse-gpio-num
 variable br-parse-gpio-ok
+variable br-pin-force-opt
+variable br-pin-pull-opt
+variable br-pin-pull-seen
 
 : br-digit? ( c -- f ) dup [char] 0 >= swap [char] 9 <= and ;
 : br-to-upper ( c -- c' ) dup [char] a >= over [char] z <= and if 32 - then ;
@@ -709,59 +712,86 @@ variable br-flags-len
   br-pin-owner-clear
   br.!ok br.!end ;
 
-\ Protocol command: pin-mode <pin> in|out [pull=up|down|none]
+\ Protocol command: pin-mode <pin> in|out [pull=up|down|none] [force=1]
 : pin-mode ( -- )
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   br-parse-gpio 0= if s" pin_range" br.#err br.!end exit then
   { gpio }
-  \ Check if flash pin
-  gpio br-pin-flags@ 8 and if s" pin_flash" br.#err br.!end exit then
   \ Parse mode
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
-  2dup s" in" str= if
-    2drop
+  2dup s" in" str= if 2drop 1 else
+  2dup s" out" str= if 2drop 2 else
+    2drop s" pin_mode_invalid" br.#err br.!end exit
+  then then
+  { mode }
+
+  \ Parse optional tokens (order-independent): pull=..., force=1
+  0 br-pin-force-opt ! 0 br-pin-pull-seen ! 0 br-pin-pull-opt !
+  begin
+    bl parse br-skip-spaces
+    dup 0>
+  while
+    2dup s" force=1" str= if
+      2drop 1 br-pin-force-opt !
+    else
+      2dup 5 min s" pull=" str= if
+        5 br-/string
+        br-pull-token 0= if drop s" pin_pull_invalid" br.#err br.!end exit then
+        br-pin-pull-opt ! 1 br-pin-pull-seen !
+      else
+        2drop s" pin_syntax" br.#err br.!end exit
+      then
+    then
+  repeat
+  2drop
+
+  \ Enforce constraints
+  gpio br-pin-flags@ 8 and if s" pin_flash" br.#err br.!end exit then
+  gpio br-pin-flags@ 2 and if
+    br-pin-force-opt @ 0= if s" pin_strapping" br.#err br.!end exit then
+  then
+  mode 2 = if
+    gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
+  then
+
+  \ Deterministic setup: reset pin + disable pulls before config.
+  gpio gpio_reset_pin drop
+  gpio gpio_pullup_dis drop
+  gpio gpio_pulldown_dis drop
+  0 gpio br-pin-pull!
+
+  mode 1 = if
     gpio INPUT gpio_set_direction drop
     1 gpio br-pin-mode!
-  else
-    2dup s" out" str= if
-      2drop
-      \ Check if input-only pin
-      gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
-      gpio OUTPUT gpio_set_direction drop
-      2 gpio br-pin-mode!
-    else
-      2drop s" pin_mode_invalid" br.#err br.!end exit
-    then
-  then
-  \ Parse optional pull=xxx
-  bl parse br-skip-spaces
-  dup 0> if
-    \ Expect "pull=xxx"
-    2dup 5 min s" pull=" str= if
-      5 br-/string
-      2dup s" up" str= if
-        2drop gpio gpio_pullup_en drop 1 gpio br-pin-pull!
+
+    br-pin-pull-seen @ if
+      br-pin-pull-opt @ dup 1 = if
+        drop
+        gpio gpio_pulldown_dis drop
+        gpio gpio_pullup_en drop
+        1 gpio br-pin-pull!
       else
-        2dup s" down" str= if
-          2drop gpio gpio_pulldown_en drop 2 gpio br-pin-pull!
+        dup 2 = if
+          drop
+          gpio gpio_pullup_dis drop
+          gpio gpio_pulldown_en drop
+          2 gpio br-pin-pull!
         else
-          2dup s" none" str= if
-            2drop
-            gpio gpio_pullup_dis drop
-            gpio gpio_pulldown_dis drop
-            0 gpio br-pin-pull!
-          else
-            2drop s" pin_pull_invalid" br.#err br.!end exit
-          then
+          drop
+          gpio gpio_pullup_dis drop
+          gpio gpio_pulldown_dis drop
+          0 gpio br-pin-pull!
         then
       then
-    else
-      2drop s" pin_syntax" br.#err br.!end exit
     then
   else
-    2drop
+    \ mode=out: force known output state (drive=0) and no pulls.
+    gpio OUTPUT gpio_set_direction drop
+    2 gpio br-pin-mode!
+    0 gpio br-pin-drive!
+    gpio 0 gpio_set_level drop
   then
   br.!ok br.!end ;
 
@@ -774,31 +804,54 @@ variable br-flags-len
   ." ! value " gpio_get_level . cr
   br.!end ;
 
-\ Protocol command: pin-write <pin> 0|1
+\ Protocol command: pin-write <pin> 0|1 [force=1]
 : pin-write ( -- )
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   br-parse-gpio 0= if s" pin_range" br.#err br.!end exit then
   { gpio }
-  \ Check constraints
-  gpio br-pin-flags@ 8 and if s" pin_flash" br.#err br.!end exit then
-  gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
-  \ Writes are output semantics: ensure OUTPUT mode unless already out.
-  gpio br-pin-mode@ 2 <> if
-    gpio OUTPUT gpio_set_direction drop
-    2 gpio br-pin-mode!
-  then
   \ Parse value
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
-  2dup s" 0" str= if
-    2drop 0 gpio br-pin-drive! gpio 0 gpio_set_level drop
-  else
-    2dup s" 1" str= if
-      2drop 1 gpio br-pin-drive! gpio 1 gpio_set_level drop
+  2dup s" 0" str= if 2drop 0 else
+  2dup s" 1" str= if 2drop 1 else
+    2drop s" pin_value_invalid" br.#err br.!end exit
+  then then
+  { v }
+
+  \ Parse optional tokens: force=1
+  0 br-pin-force-opt !
+  begin
+    bl parse br-skip-spaces
+    dup 0>
+  while
+    2dup s" force=1" str= if
+      2drop 1 br-pin-force-opt !
     else
-      2drop s" pin_value_invalid" br.#err br.!end exit
+      2drop s" pin_syntax" br.#err br.!end exit
     then
+  repeat
+  2drop
+
+  \ Enforce constraints
+  gpio br-pin-flags@ 8 and if s" pin_flash" br.#err br.!end exit then
+  gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
+  gpio br-pin-flags@ 2 and if
+    br-pin-force-opt @ 0= if s" pin_strapping" br.#err br.!end exit then
+  then
+
+  \ Writes are output semantics: force deterministic output state, no pulls.
+  gpio gpio_reset_pin drop
+  gpio OUTPUT gpio_set_direction drop
+  gpio gpio_pullup_dis drop
+  gpio gpio_pulldown_dis drop
+  0 gpio br-pin-pull!
+  2 gpio br-pin-mode!
+
+  v 0= if
+    0 gpio br-pin-drive! gpio 0 gpio_set_level drop
+  else
+    1 gpio br-pin-drive! gpio 1 gpio_set_level drop
   then
   br.!ok br.!end ;
 

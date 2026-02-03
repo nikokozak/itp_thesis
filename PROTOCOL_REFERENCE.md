@@ -32,9 +32,9 @@
 | `pin-status` | `<pin>` | Pin line | One GPIO state line (Milestone E) |
 | `pin-claim` | `<pin> <owner>` | `! ok` | Claim ownership label (Milestone E) |
 | `pin-release` | `<pin>` | `! ok` | Release ownership (Milestone E) |
-| `pin-mode` | `<pin> in\|out [pull=up\|down\|none]` | `! ok` | Configure GPIO (Milestone E) |
+| `pin-mode` | `<pin> in\|out [pull=up\|down\|none] [force=1]` | `! ok` | Configure GPIO (Milestone E) |
 | `pin-read` | `<pin>` | `! value <0\|1>` | Read GPIO level (Milestone E) |
-| `pin-write` | `<pin> 0\|1` | `! ok` | Write GPIO level (Milestone E) |
+| `pin-write` | `<pin> 0\|1 [force=1]` | `! ok` | Write GPIO level (Milestone E) |
 
 ### Safety Commands (All Nodes)
 
@@ -122,6 +122,10 @@ Child descriptors (`! child ...`) are planned for Milestone D routing; currently
 
 Pin tokens accepted by pin commands: `<n>`, `D<n>`, `GPIO<n>`.
 
+Notes:
+- `drive` is the last commanded output value (meaningful when `mode=out`).
+- `level` is the instantaneous readback via `gpio_get_level` (may differ from `drive` depending on wiring/load/config).
+
 ### Pin Read Response (`pin-read`)
 
 ```
@@ -173,6 +177,11 @@ Pin tokens accepted by pin commands: `<n>`, `D<n>`, `GPIO<n>`.
 ! end
 ```
 
+Common error codes (non-exhaustive):
+- `pin_strapping`: pin is a boot strapping pin; requires explicit override (`force=1`) for `pin-mode`/`pin-write`.
+- `pin_flash`: pin is reserved for flash IO and cannot be used.
+- `pin_input_only`: pin cannot be configured as output.
+
 ## Connector Pinout
 
 ```
@@ -195,6 +204,8 @@ Pin tokens accepted by pin commands: `<n>`, `D<n>`, `GPIO<n>`.
 | Parity | None |
 | Stop bits | 1 |
 | Flow control | None |
+
+Note: Some ESP32 boards may emit ROM boot output at a different baud rate; when viewed at 115200 this can appear as garbage characters before the first Bedrock protocol line. Terminal tooling tolerates this by scanning for protocol markers (`!`, `#`, `! end`).
 
 ## Forth Parsing Pattern
 

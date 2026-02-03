@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from .theme import (
     init_colors,
@@ -107,6 +107,7 @@ class AppState:
     node_id: str | None = None
     role: str | None = None
     ver: str | None = None
+    board_id: str | None = None
     mcu: str | None = None
     units: str | None = None
     pins: str | None = None
@@ -155,13 +156,42 @@ class AppState:
     pins_data: dict = field(default_factory=dict)  # gpio -> PinState
     pins_board_id: str | None = None
     pins_selected: int = 0  # Currently selected GPIO index
-    pins_gpios: list = field(default_factory=list)  # Sorted list of GPIO numbers
+    pins_gpios: list[int] = field(default_factory=list)  # Active navigation list
+    pins_gpios_all: list[int] = field(default_factory=list)
+    pins_gpios_board: list[int] = field(default_factory=list)
+    pins_view: Literal["board", "all"] = "board"
+    pins_scroll: int = 0
     pins_loading: bool = False
     pins_action_gpio: int | None = None  # GPIO for pending action
     pins_trace_running: bool = False
     pins_trace_gpio: int | None = None
     pins_trace_progress: float = 0.0
     pins_trace_status: str = ""
+    pins_danger_armed_until: float = 0.0
+
+
+def _pins_danger_armed(state: AppState) -> bool:
+    """Return True if dangerous pin operations are temporarily armed."""
+    return time.monotonic() < state.pins_danger_armed_until
+
+
+def _nearest_gpio_index(gpios: list[int], target_gpio: int | None) -> int:
+    """Return index of target GPIO, or nearest candidate if not present."""
+    if not gpios:
+        return 0
+    if target_gpio is None:
+        return 0
+    try:
+        return gpios.index(target_gpio)
+    except ValueError:
+        best_idx = 0
+        best_dist = abs(gpios[0] - target_gpio)
+        for idx, gpio in enumerate(gpios[1:], start=1):
+            dist = abs(gpio - target_gpio)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+        return best_idx
 
 
 def create_main_menu(state: AppState) -> Menu:
@@ -526,6 +556,29 @@ def io_worker(state: AppState) -> None:
         needs_settle = False  # Settle done
         return persistent_session
 
+    def refresh_pin_status(session: SerialSession, gpio: int) -> None:
+        """Refresh a single pin state via `pin-status` and update UI state."""
+        from ..pins import parse_pin_kv
+
+        response = session.send_protocol(f"pin-status {gpio}", timeout_s=3.0)
+        has_err, err_msg = is_error(response)
+        if has_err:
+            state.result_queue.put(("pin_action_error", f"pin-status failed: {err_msg}"))
+            return
+
+        pin_state = None
+        for line in response.splitlines():
+            parsed = parse_pin_kv(line)
+            if parsed:
+                pin_state = parsed
+                break
+
+        if pin_state is None:
+            state.result_queue.put(("pin_action_error", "Could not parse pin-status response"))
+            return
+
+        state.result_queue.put(("pin_status_ok", gpio, pin_state))
+
     try:
         while state.running:
             try:
@@ -778,6 +831,14 @@ def io_worker(state: AppState) -> None:
                         )
                     )
 
+                elif action == "pin_status":
+                    gpio = int(args[0])
+                    session = get_session()
+                    if not ensure_protocol(session, timeout_s=3.0):
+                        state.result_queue.put(("error", "Could not enter protocol mode"))
+                        continue
+                    refresh_pin_status(session, gpio)
+
                 elif action == "pin_claim":
                     gpio = args[0]
                     owner = args[1]
@@ -792,8 +853,7 @@ def io_worker(state: AppState) -> None:
                         state.result_queue.put(("pin_action_error", f"Claim failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} claimed by {owner}"))
-                        # Refresh pins after action
-                        state.io_queue.put(("pins", True))
+                        refresh_pin_status(session, gpio)
 
                 elif action == "pin_release":
                     gpio = args[0]
@@ -808,12 +868,13 @@ def io_worker(state: AppState) -> None:
                         state.result_queue.put(("pin_action_error", f"Release failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} released"))
-                        state.io_queue.put(("pins", True))
+                        refresh_pin_status(session, gpio)
 
                 elif action == "pin_mode":
                     gpio = args[0]
                     mode = args[1]
                     pull = args[2] if len(args) > 2 else None
+                    force = bool(args[3]) if len(args) > 3 else False
                     session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
@@ -822,29 +883,35 @@ def io_worker(state: AppState) -> None:
                     cmd = f"pin-mode {gpio} {mode}"
                     if pull:
                         cmd += f" pull={pull}"
+                    if force:
+                        cmd += " force=1"
                     response = session.send_protocol(cmd, timeout_s=3.0)
                     has_err, err_msg = is_error(response)
                     if has_err:
                         state.result_queue.put(("pin_action_error", f"Mode change failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} set to {mode}"))
-                        state.io_queue.put(("pins", True))
+                        refresh_pin_status(session, gpio)
 
                 elif action == "pin_write":
                     gpio = args[0]
                     value = args[1]
+                    force = bool(args[2]) if len(args) > 2 else False
                     session = get_session()
                     if not ensure_protocol(session, timeout_s=3.0):
                         state.result_queue.put(("error", "Could not enter protocol mode"))
                         continue
 
-                    response = session.send_protocol(f"pin-write {gpio} {value}", timeout_s=3.0)
+                    cmd = f"pin-write {gpio} {value}"
+                    if force:
+                        cmd += " force=1"
+                    response = session.send_protocol(cmd, timeout_s=3.0)
                     has_err, err_msg = is_error(response)
                     if has_err:
                         state.result_queue.put(("pin_action_error", f"Write failed: {err_msg}"))
                     else:
                         state.result_queue.put(("pin_action_ok", f"GPIO{gpio} drive={value}"))
-                        state.io_queue.put(("pins", True))
+                        refresh_pin_status(session, gpio)
 
             except SerialError as e:
                 # Serial error - close session so next command reconnects
@@ -875,6 +942,7 @@ def process_results(state: AppState) -> None:
             state.node_id = probe_result.node_id
             state.role = probe_result.role
             state.ver = probe_result.ver
+            state.board_id = probe_result.raw_identity.get("board") or state.board_id
             state.mcu = probe_result.mcu
             state.fifo_size = probe_result.fifo
             state.units = probe_result.units
@@ -918,6 +986,8 @@ def process_results(state: AppState) -> None:
                 state.units = meta["units"] or state.units
             if "pins" in meta:
                 state.pins = meta["pins"] or state.pins
+            if "board" in meta:
+                state.board_id = meta["board"] or state.board_id
 
             if "fifo" in meta:
                 try:
@@ -1024,12 +1094,42 @@ def process_results(state: AppState) -> None:
 
         # Pins Inspector results
         elif result_type == "pins_ok":
+            from ..boards import get_manifest
+
             board_id = result[1]
             pins_data = result[2]
             quiet = bool(result[3]) if len(result) > 3 else False
+
+            prev_gpio: int | None = None
+            if state.pins_gpios and 0 <= state.pins_selected < len(state.pins_gpios):
+                prev_gpio = state.pins_gpios[state.pins_selected]
+
             state.pins_data = pins_data
-            state.pins_board_id = board_id
-            state.pins_gpios = sorted(pins_data.keys())
+            state.pins_board_id = board_id or state.board_id
+
+            state.pins_gpios_all = sorted(pins_data.keys())
+            state.pins_gpios_board = []
+            board = get_manifest(state.pins_board_id) if state.pins_board_id else None
+            if board:
+                for pin_def in board.pins:
+                    if pin_def.gpio is None:
+                        continue
+                    if pin_def.gpio in pins_data:
+                        state.pins_gpios_board.append(int(pin_def.gpio))
+
+            if state.pins_view == "board" and state.pins_gpios_board:
+                state.pins_gpios = list(state.pins_gpios_board)
+            else:
+                if state.pins_view == "board" and not state.pins_gpios_board:
+                    state.pins_view = "all"
+                state.pins_gpios = list(state.pins_gpios_all)
+
+            state.pins_selected = _nearest_gpio_index(state.pins_gpios, prev_gpio)
+            if state.pins_gpios:
+                state.pins_selected = max(0, min(state.pins_selected, len(state.pins_gpios) - 1))
+            else:
+                state.pins_selected = 0
+            state.pins_scroll = max(0, min(state.pins_scroll, state.pins_selected))
             state.pins_loading = False
             if not quiet:
                 state.log.append(f"Pins refreshed ({len(pins_data)} GPIOs)", COLOR_SUCCESS)
@@ -1075,9 +1175,8 @@ def process_results(state: AppState) -> None:
             if preview:
                 state.log.append(f"  preview: {preview}", COLOR_DIM)
 
-            # Refresh pin data after sampling.
-            state.pins_loading = True
-            state.io_queue.put(("pins", False))
+            # Refresh the traced pin after sampling.
+            state.io_queue.put(("pin_status", gpio))
 
         elif result_type == "pin_trace_error":
             err_msg = result[1]
@@ -1086,6 +1185,11 @@ def process_results(state: AppState) -> None:
             state.pins_trace_progress = 0.0
             state.pins_trace_status = ""
             state.log.append(f"Trace failed: {err_msg}", COLOR_ERROR)
+
+        elif result_type == "pin_status_ok":
+            gpio = int(result[1])
+            pin_state = result[2]
+            state.pins_data[gpio] = pin_state
 
         elif result_type == "pin_action_ok":
             message = result[1]
@@ -1363,10 +1467,36 @@ def handle_pins_input(state: AppState, key: int) -> None:
     elif state.pins_trace_running:
         # Ignore input while tracing (best-effort; Esc still works).
         return
+    elif key == ord("!"):
+        # Arm/disarm dangerous pin operations (strapping pins) for a short window.
+        if _pins_danger_armed(state):
+            state.pins_danger_armed_until = 0.0
+            state.log.append("Danger disarmed", COLOR_DIM)
+        else:
+            state.pins_danger_armed_until = time.monotonic() + 10.0
+            state.log.append("Danger armed for 10s (strapping pins enabled)", COLOR_WARNING)
     elif key == ord("r") or key == ord("R"):
         # Refresh pins
         state.pins_loading = True
         state.io_queue.put(("pins", False))
+    elif key == ord("a") or key == ord("A"):
+        # Toggle pins view (board footprint <-> all GPIOs) when a manifest exists.
+        prev = selected_gpio
+        if not state.pins_gpios_board:
+            state.pins_view = "all"
+            state.pins_gpios = list(state.pins_gpios_all) if state.pins_gpios_all else state.pins_gpios
+            state.pins_selected = _nearest_gpio_index(state.pins_gpios, prev)
+            state.pins_scroll = 0
+            state.log.append("No board manifest; showing all GPIOs", COLOR_DIM)
+        else:
+            if state.pins_view == "board":
+                state.pins_view = "all"
+                state.pins_gpios = list(state.pins_gpios_all)
+            else:
+                state.pins_view = "board"
+                state.pins_gpios = list(state.pins_gpios_board)
+            state.pins_selected = _nearest_gpio_index(state.pins_gpios, prev)
+            state.pins_scroll = 0
     elif key == curses.KEY_UP or key == ord("k"):
         # Move selection up
         if state.pins_gpios and state.pins_selected > 0:
@@ -1407,18 +1537,20 @@ def handle_pins_input(state: AppState, key: int) -> None:
         if selected_gpio is not None:
             pin_state = state.pins_data.get(selected_gpio)
             if pin_state:
-                # Safety check: refuse to toggle strapping/flash pins
-                if pin_state.is_strapping() or pin_state.is_flash():
-                    state.log.append(f"GPIO{selected_gpio} is dangerous (strapping/flash)", COLOR_ERROR)
+                if pin_state.is_flash():
+                    state.log.append(f"GPIO{selected_gpio} is a flash pin; refusing to write", COLOR_ERROR)
+                elif pin_state.is_strapping() and not _pins_danger_armed(state):
+                    state.log.append(f"GPIO{selected_gpio} is strapping; press '!' to arm then retry", COLOR_ERROR)
                 else:
+                    force = bool(pin_state.is_strapping())
                     # Prefer toggling the commanded output ("drive") when in output mode,
                     # since `digitalRead` may not reflect output latch on all boards/cores.
                     if pin_state.mode == "out" and pin_state.drive is not None:
                         new_value = 1 - pin_state.drive
-                        state.io_queue.put(("pin_write", selected_gpio, new_value))
+                        state.io_queue.put(("pin_write", selected_gpio, new_value, force))
                     elif pin_state.level is not None:
                         new_value = 1 - pin_state.level
-                        state.io_queue.put(("pin_write", selected_gpio, new_value))
+                        state.io_queue.put(("pin_write", selected_gpio, new_value, force))
                     else:
                         state.log.append(f"GPIO{selected_gpio} level unknown, cannot toggle", COLOR_ERROR)
             else:
@@ -1429,8 +1561,11 @@ def handle_pins_input(state: AppState, key: int) -> None:
             pin_state = state.pins_data.get(selected_gpio)
             if pin_state and pin_state.is_flash():
                 state.log.append(f"GPIO{selected_gpio} is a flash pin, cannot change mode", COLOR_ERROR)
+            elif pin_state and pin_state.is_strapping() and not _pins_danger_armed(state):
+                state.log.append(f"GPIO{selected_gpio} is strapping; press '!' to arm then retry", COLOR_ERROR)
             else:
-                state.io_queue.put(("pin_mode", selected_gpio, "in", "up"))
+                force = bool(pin_state and pin_state.is_strapping())
+                state.io_queue.put(("pin_mode", selected_gpio, "in", "up", force))
     elif key == ord("o") or key == ord("O"):
         # Set pin to output
         if selected_gpio is not None:
@@ -1438,8 +1573,11 @@ def handle_pins_input(state: AppState, key: int) -> None:
             if pin_state and (pin_state.is_flash() or pin_state.is_input_only()):
                 flags_str = ",".join(pin_state.flags) if pin_state.flags else "restricted"
                 state.log.append(f"GPIO{selected_gpio} cannot be set to output ({flags_str})", COLOR_ERROR)
+            elif pin_state and pin_state.is_strapping() and not _pins_danger_armed(state):
+                state.log.append(f"GPIO{selected_gpio} is strapping; press '!' to arm then retry", COLOR_ERROR)
             else:
-                state.io_queue.put(("pin_mode", selected_gpio, "out"))
+                force = bool(pin_state and pin_state.is_strapping())
+                state.io_queue.put(("pin_mode", selected_gpio, "out", None, force))
 
 
 def execute_action(state: AppState, action: Action | None) -> None:
@@ -1602,9 +1740,13 @@ def draw_help(win: curses.window, state: AppState) -> None:
     row += 1
     add_binding(row, "j/k", "Move   r Refresh   Esc Back", COLOR_PROMPT)
     row += 1
-    add_binding(row, "t", "Toggle drive level (0<->1)", COLOR_PROMPT)
+    add_binding(row, "t", "Toggle drive (0<->1)", COLOR_PROMPT)
     row += 1
     add_binding(row, "i/o", "Mode: Input (pull-up) / Output", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "a", "View: Board footprint / All GPIOs", COLOR_PROMPT)
+    row += 1
+    add_binding(row, "!", "Arm strapping pins (10s)", COLOR_PROMPT)
     row += 1
     add_binding(row, "c/u/s", "Claim / Release / Sample (pin-read trace)", COLOR_PROMPT)
     row += 1
@@ -1815,26 +1957,29 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             )
             return
 
+        armed = _pins_danger_armed(state)
+
         # Get board manifest for footprint view
-        board = None
-        if state.pins_board_id:
-            board = get_manifest(state.pins_board_id)
+        board = get_manifest(state.pins_board_id) if state.pins_board_id else None
 
         # Get selected GPIO
         selected_gpio = None
         if state.pins_gpios and 0 <= state.pins_selected < len(state.pins_gpios):
             selected_gpio = state.pins_gpios[state.pins_selected]
 
-        if board:
+        if board and state.pins_view == "board":
             # Board footprint view (two columns)
             left_pins = board.left_column()
             right_pins = board.right_column()
             max_rows = max(len(left_pins), len(right_pins))
 
+            header = board.display_name
+            if armed:
+                header += "  [DANGER ARMED]"
             win.addstr(
                 y + 1,
                 x,
-                board.display_name[:inner_w].ljust(inner_w),
+                header[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
             )
             win.hline(y + 2, x, curses.ACS_HLINE, min(inner_w, 50), curses.color_pair(COLOR_BORDER))
@@ -1849,7 +1994,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             col2_x = x + 26  # Space for left column
             cell_w = 24
 
-            max_pin_rows = max(0, inner_h - 10)  # Leave room for details + instructions.
+            max_pin_rows = max(0, inner_h - 11)  # Leave room for details + warning + instructions.
             for i in range(min(max_rows, max_pin_rows)):
                 row_y = y + 5 + i
 
@@ -1903,32 +2048,51 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                         win.addstr(row_y, col2_x, cell[:cell_w].ljust(cell_w), cell_attr)
 
         else:
-            # Simple list view (no board manifest)
+            # List view (all GPIOs, scrollable)
+            header = (
+                (board.display_name + "  (all GPIOs)") if board else f"Board: {state.pins_board_id or 'unknown'}"
+            )
+            if armed:
+                header += "  [DANGER ARMED]"
             win.addstr(
                 y + 1,
                 x,
-                f"Board: {state.pins_board_id or 'unknown'}"[:inner_w].ljust(inner_w),
+                header[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
             )
+            list_start = y + 4
+            visible_count = max(0, inner_h - 10)  # Leave room for details + warning + instructions.
+
+            start = 0
+            end = 0
+            if visible_count > 0 and state.pins_gpios:
+                max_scroll = max(0, len(state.pins_gpios) - visible_count)
+                state.pins_scroll = max(0, min(state.pins_scroll, max_scroll))
+                if state.pins_selected < state.pins_scroll:
+                    state.pins_scroll = state.pins_selected
+                elif state.pins_selected >= state.pins_scroll + visible_count:
+                    state.pins_scroll = state.pins_selected - visible_count + 1
+                state.pins_scroll = max(0, min(state.pins_scroll, max_scroll))
+                start = state.pins_scroll
+                end = min(len(state.pins_gpios), start + visible_count)
+
+            up = "↑" if start > 0 else " "
+            down = "↓" if end < len(state.pins_gpios) else " "
+            scroll_hint = f"  {up}{down}" if len(state.pins_gpios) > visible_count else ""
             win.addstr(
                 y + 2,
                 x,
-                "Legend: X flash  ! strapping  I input-only  S safe"[:inner_w].ljust(inner_w),
+                f"Legend: X flash  ! strapping  I input-only  S safe{scroll_hint}"[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_DIM) | curses.A_DIM,
             )
 
-            list_start = y + 4
-            visible_count = max(0, inner_h - 9)  # Leave room for details + instructions.
-
-            for i, gpio in enumerate(state.pins_gpios[:visible_count]):
+            for i, gpio in enumerate(state.pins_gpios[start:end]):
                 state_data = state.pins_data.get(gpio)
                 if state_data:
-                    shown = state_data.level
-                    if state_data.mode == "out" and state_data.drive is not None:
-                        shown = state_data.drive
-                    level = shown if shown is not None else "-"
+                    drive = state_data.drive if state_data.drive is not None else "-"
+                    level = state_data.level if state_data.level is not None else "-"
                     owner = state_data.owner[:7] if state_data.owner else "-"
-                    line = f"GPIO{gpio:02d}: M={state_data.mode[:3]:3s} L={level} O={owner}"
+                    line = f"GPIO{gpio:02d}: M={state_data.mode[:3]:3s} D={drive} L={level} O={owner}"
                 else:
                     line = f"GPIO{gpio:02d}: ?"
 
@@ -1943,7 +2107,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
         # Pin details box
         if selected_gpio is not None and selected_gpio in state.pins_data:
             pin_state = state.pins_data[selected_gpio]
-            detail_y = y + inner_h - 5
+            detail_y = y + inner_h - 6
             win.hline(detail_y, x, curses.ACS_HLINE, min(inner_w, 50), curses.color_pair(COLOR_BORDER))
             win.addstr(
                 detail_y + 1,
@@ -1969,13 +2133,29 @@ def draw_pins(win: curses.window, state: AppState) -> None:
                 f"Owner: {owner}  Flags: {flags}"[:inner_w].ljust(inner_w),
                 curses.color_pair(COLOR_PANEL),
             )
+            warn = ""
+            warn_color = COLOR_DIM
+            if (
+                pin_state.mode == "out"
+                and pin_state.drive in (0, 1)
+                and pin_state.level in (0, 1)
+                and pin_state.drive != pin_state.level
+            ):
+                warn = "WARN: drive!=level (possible wiring/load/config issue)"
+                warn_color = COLOR_WARNING
+            win.addstr(
+                detail_y + 4,
+                x,
+                warn[:inner_w].ljust(inner_w),
+                curses.color_pair(warn_color) | (curses.A_BOLD if warn else curses.A_DIM),
+            )
 
         # Instructions
         if state.pins_trace_running and state.pins_trace_gpio is not None:
             pct = int(state.pins_trace_progress * 100.0)
             instr = f"Tracing GPIO{state.pins_trace_gpio}... {pct:3d}%  (please wait)  Esc Back"
         else:
-            instr = "j/k Move   t Toggle level   i Input+PU   o Output   s Sample   c Claim   u Release   r Refresh   Esc Back"
+            instr = "j/k Move  t Toggle drive  i Input+PU  o Output  a View  ! Arm  s Sample  c Claim  u Release  r Refresh  Esc Back"
         win.addstr(
             y + inner_h - 1,
             x,
@@ -2000,10 +2180,13 @@ def _format_pin_cell_tui(pin_def, pins_data: dict, selected_gpio: int | None) ->
     if state is None:
         return f"{pin_def.label:4s} G{gpio:02d} ?"
 
-    shown = state.level
     if state.mode == "out" and state.drive is not None:
         shown = state.drive
-    level = str(shown) if shown is not None else "-"
+        marker = "D"
+    else:
+        shown = state.level
+        marker = "L"
+    value = str(shown) if shown is not None else "-"
     mode_abbr = state.mode[0].upper() if state.mode else "?"
     owner = state.owner[:4] if state.owner else "-"
 
@@ -2017,7 +2200,7 @@ def _format_pin_cell_tui(pin_def, pins_data: dict, selected_gpio: int | None) ->
     elif "safe" in state.flags:
         warn = "S"
 
-    return f"{pin_def.label:4s} G{gpio:02d} L{level} M{mode_abbr} {owner:4s}{warn}"
+    return f"{pin_def.label:4s} G{gpio:02d} {marker}{value} M{mode_abbr} {owner:4s}{warn}"
 
 
 def draw_screen(win: curses.window, state: AppState) -> None:
