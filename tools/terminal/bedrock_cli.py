@@ -390,27 +390,16 @@ def cmd_load(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        # Use short settle (2s) to interrupt autoexec and get clean REPL
-        # ESP32forth's autoexec waits ~3s, so 2s settle + sending input interrupts it
         with SerialSession.open(
             port=args.port,
             baud=args.baud,
-            settle_s=2.0,  # Short settle to interrupt autoexec
+            settle_s=args.settle,
         ) as session:
             with get_transcript(args, session.port) as transcript:
-                # Step 1: Interrupt autoexec and get REPL prompt
-                transcript.record_comment("Interrupting autoexec to enter REPL...")
+                # Step 1: Ensure REPL mode before line-by-line load.
+                transcript.record_comment("Entering REPL mode...")
                 print("Entering REPL mode...")
-
-                # Send a safe no-op to interrupt autoexec (avoid empty-line replay quirks)
-                session.send_line("sp0 sp!")
-                result = session.read_until(b" ok", args.timeout)
-                if not result.found:
-                    # Try again (device may still be in autoexec)
-                    session.send_line("sp0 sp!")
-                    result = session.read_until(b" ok", args.timeout)
-
-                if not result.found:
+                if not ensure_repl(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter REPL mode.\n"
                         "Try: Hold SAFE + press EN to stay in REPL.",
@@ -653,25 +642,16 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
             return 0
 
     try:
-        # Use short settle to interrupt autoexec
         with SerialSession.open(
             port=args.port,
             baud=args.baud,
-            settle_s=2.0,  # Short settle to interrupt autoexec
+            settle_s=args.settle,
         ) as session:
             with get_transcript(args, session.port) as transcript:
-                # Step 1: Get into REPL mode
-                transcript.record_comment("Interrupting autoexec to enter REPL...")
+                # Step 1: Ensure REPL mode before applying restore steps.
+                transcript.record_comment("Entering REPL mode...")
                 print("Entering REPL mode...")
-
-                # Send a safe no-op to interrupt autoexec (avoid empty-line replay quirks)
-                session.send_line("sp0 sp!")
-                result = session.read_until(b" ok", args.timeout)
-                if not result.found:
-                    session.send_line("sp0 sp!")
-                    result = session.read_until(b" ok", args.timeout)
-
-                if not result.found:
+                if not ensure_repl(session, timeout_s=args.timeout):
                     print(
                         "Error: Could not enter REPL mode.\n"
                         "Try: Hold SAFE + press EN to stay in REPL.",
