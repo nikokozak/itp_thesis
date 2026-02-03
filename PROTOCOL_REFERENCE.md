@@ -115,7 +115,7 @@ Child descriptors (`! child ...`) are planned for Milestone D routing; currently
 
 ```
 ! board <board-id>      ← optional
-! pin gpio=<n> mode=<mode> level=<0|1|-> pull=<none|up|down> owner=<token|-> flags=<csv|->
+! pin gpio=<n> mode=<mode> drive=<0|1|-> level=<0|1|-> pull=<none|up|down> owner=<token|-> flags=<csv|->
 ! ...
 ! end
 ```
