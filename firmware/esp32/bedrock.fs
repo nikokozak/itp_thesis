@@ -1033,6 +1033,8 @@ variable br-old-notfound
 : save ( -- )
   \ Persist the current image to /spiffs/myforth and keep protocol auto-start enabled.
   br-ensure-autostart
+  \ Also persist metadata to SPIFFS so it survives reloads that `forget` this image.
+  br-meta-save drop
   remember
   s" save" br-history-event
   br.!ok
@@ -1041,6 +1043,8 @@ variable br-old-notfound
 : safe-save ( -- )
   br-validate? if
     br-ensure-autostart
+    \ Also persist metadata to SPIFFS so it survives reloads that `forget` this image.
+    br-meta-save drop
     \ Backup last saved image before overwriting the primary remember file.
     br-myforth$ br-file-exists? if
       br-myforth$ br-lkg$ br-copy-file 0= if
@@ -1150,7 +1154,7 @@ create br-ch 1 allot
 
 br-clear
 br-nl-init
-br-meta-load
+br-meta-path$ br-file-exists? if br-meta-load then
 br-pin-registry-init
 br-myforth-build
 br-lkg-build
