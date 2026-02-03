@@ -36,5 +36,8 @@ venv/
 # Bedrock CLI per-node logs (gitignored, repo-local)
 .bedrock/
 
+# Local scratch
+tmp/
+
 # Legacy (pre-Bedrock rename)
 .codignity/
