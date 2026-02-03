@@ -657,7 +657,7 @@ variable br-flags-len
   space
   ." level="
   dup br-pin-readable? if
-    dup digitalRead .
+    dup gpio_get_level .
   else
     ." - "
   then
@@ -722,14 +722,14 @@ variable br-flags-len
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   2dup s" in" str= if
     2drop
-    gpio INPUT pinMode
+    gpio INPUT gpio_set_direction drop
     1 gpio br-pin-mode!
   else
     2dup s" out" str= if
       2drop
       \ Check if input-only pin
       gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
-      gpio OUTPUT pinMode
+      gpio OUTPUT gpio_set_direction drop
       2 gpio br-pin-mode!
     else
       2drop s" pin_mode_invalid" br.#err br.!end exit
@@ -771,7 +771,7 @@ variable br-flags-len
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   br-parse-gpio 0= if s" pin_range" br.#err br.!end exit then
   dup br-pin-readable? 0= if drop s" pin_flash" br.#err br.!end exit then
-  ." ! value " digitalRead . cr
+  ." ! value " gpio_get_level . cr
   br.!end ;
 
 \ Protocol command: pin-write <pin> 0|1
@@ -785,17 +785,17 @@ variable br-flags-len
   gpio br-pin-flags@ 4 and if s" pin_input_only" br.#err br.!end exit then
   \ Writes are output semantics: ensure OUTPUT mode unless already out.
   gpio br-pin-mode@ 2 <> if
-    gpio OUTPUT pinMode
+    gpio OUTPUT gpio_set_direction drop
     2 gpio br-pin-mode!
   then
   \ Parse value
   bl parse br-skip-spaces
   dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
   2dup s" 0" str= if
-    2drop 0 gpio br-pin-drive! gpio 0 digitalWrite
+    2drop 0 gpio br-pin-drive! gpio 0 gpio_set_level drop
   else
     2dup s" 1" str= if
-      2drop 1 gpio br-pin-drive! gpio 1 digitalWrite
+      2drop 1 gpio br-pin-drive! gpio 1 gpio_set_level drop
     else
       2drop s" pin_value_invalid" br.#err br.!end exit
     then
@@ -1019,10 +1019,10 @@ variable br-old-notfound
   br-old-arrow @ arrow ! ;
 
 : br-safe-setup ( -- )
-  br-safe-gpio INPUT pinMode
+  br-safe-gpio INPUT gpio_set_direction drop
   br-safe-gpio gpio_pullup_en drop ;
 
-: br-safe-pressed? ( -- f ) br-safe-gpio digitalRead 0= ;
+: br-safe-pressed? ( -- f ) br-safe-gpio gpio_get_level 0= ;
 
 : br-boot ( -- )
   \ Reload persisted metadata from SPIFFS so `meta` survives resets without
