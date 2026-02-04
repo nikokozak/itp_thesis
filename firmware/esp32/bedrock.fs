@@ -855,6 +855,136 @@ variable br-flags-len
   then
   br.!ok br.!end ;
 
+\ ------------------------------------------------------------
+\ Pin capture (digital) — MVP (bounded, human-readable)
+\
+\ Protocol commands:
+\ - pin-capture-cap
+\ - pin-capture <pin> [n=<u>] [dt=<u>] [format=rle|list]
+\
+\ Notes:
+\ - Digital-only. Analog capture is future work.
+\ - Sampling is best-effort; `dt` uses `ms`, so timing is coarse.
+\ - Output is always bounded and terminates with `! end`.
+
+2048 constant br-capture-max-n
+1 constant br-capture-min-dt
+60000 constant br-capture-max-dt
+200 constant br-capture-default-n
+10 constant br-capture-default-dt
+
+variable br-capture-n
+variable br-capture-dt
+\ format enum: 0=rle, 1=list
+variable br-capture-format
+
+variable br-capture-parse-num
+
+: br-parse-u ( a n -- u f )
+  0 br-capture-parse-num !
+  dup 0= if 2drop 0 0 exit then
+  begin dup while
+    over c@ br-digit? 0= if 2drop 0 0 exit then
+    over c@ [char] 0 - br-capture-parse-num @ 10 * + br-capture-parse-num !
+    br-adv
+  repeat
+  2drop
+  br-capture-parse-num @ -1 ;
+
+: br-capture-format$ ( fmt -- a n )
+  0= if s" rle" else s" list" then ;
+
+variable br-capture-rle-cur
+variable br-capture-rle-run
+
+\ Protocol command: pin-capture-cap
+: pin-capture-cap ( -- )
+  ." ! cap kind=digital mode=sample dest=stream formats=rle,list dt_unit=ms min_dt="
+  br-capture-min-dt .
+  ." max_n=" br-capture-max-n .
+  ." default_dt=" br-capture-default-dt .
+  ." default_n=" br-capture-default-n .
+  cr
+  br.!end ;
+
+\ Protocol command: pin-capture <pin> [n=<u>] [dt=<u>] [format=rle|list]
+: pin-capture ( -- )
+  bl parse br-skip-spaces
+  dup 0= if 2drop s" pin_syntax" br.#err br.!end exit then
+  br-parse-gpio 0= if s" pin_range" br.#err br.!end exit then
+  { gpio }
+  gpio br-pin-readable? 0= if s" pin_flash" br.#err br.!end exit then
+
+  br-capture-default-n br-capture-n !
+  br-capture-default-dt br-capture-dt !
+  0 br-capture-format !
+
+  \ Parse optional tokens (order-independent): n=..., dt=..., format=...
+  begin
+    bl parse br-skip-spaces
+    dup 0>
+  while
+    2dup 2 min s" n=" str= if
+      2 br-/string br-parse-u 0= if drop s" capture_syntax" br.#err br.!end exit then
+      br-capture-n !
+    else
+      2dup 3 min s" dt=" str= if
+        3 br-/string br-parse-u 0= if drop s" capture_syntax" br.#err br.!end exit then
+        br-capture-dt !
+      else
+        2dup 7 min s" format=" str= if
+          7 br-/string
+          2dup s" rle" str= if 2drop 0 br-capture-format !
+          else 2dup s" list" str= if 2drop 1 br-capture-format !
+          else 2drop s" capture_format_invalid" br.#err br.!end exit
+          then then
+        else
+          2drop s" capture_token" br.#err br.!end exit
+        then
+      then
+    then
+  repeat
+  2drop
+
+  \ Validate ranges
+  br-capture-n @ dup 1 < if drop s" capture_n_range" br.#err br.!end exit then
+  br-capture-max-n > if s" capture_n_range" br.#err br.!end exit then
+  br-capture-dt @ dup br-capture-min-dt < if drop s" capture_dt_range" br.#err br.!end exit then
+  br-capture-max-dt > if s" capture_dt_range" br.#err br.!end exit then
+
+  \ Header line
+  ." ! capture gpio=" gpio . space
+  ." kind=digital mode=sample dest=stream n=" br-capture-n @ . space
+  ." dt=" br-capture-dt @ . ." dt_unit=ms format=" br-capture-format @ br-capture-format$ type cr
+
+  br-capture-format @ 1 = if
+    \ list: emit one sample per line
+    br-capture-n @ 0 ?do
+      ." ! samp i=" i . ." v=" gpio gpio_get_level . cr
+      i br-capture-n @ 1- < if br-capture-dt @ ms then
+    loop
+    br.!end
+    exit
+  then
+
+  \ rle: run-length encoding
+  gpio gpio_get_level br-capture-rle-cur !
+  1 br-capture-rle-run !
+  br-capture-n @ 1- 0 ?do
+    br-capture-dt @ ms
+    gpio gpio_get_level
+    dup br-capture-rle-cur @ = if
+      drop
+      br-capture-rle-run @ 1+ br-capture-rle-run !
+    else
+      ." ! run v=" br-capture-rle-cur @ . ." n=" br-capture-rle-run @ . cr
+      br-capture-rle-cur !
+      1 br-capture-rle-run !
+    then
+  loop
+  ." ! run v=" br-capture-rle-cur @ . ." n=" br-capture-rle-run @ . cr
+  br.!end ;
+
 \ Protocol commands (match PROTOCOL_REFERENCE.md)
 
 : ? ( -- )
@@ -898,7 +1028,9 @@ variable br-flags-len
   ." ! children " br-children$ type cr
   ." ! fifo " br-fifo-size . cr
   ." ! core ? s n d c" cr
-  ." ! extended explain source history define meta save validate safe-save restart recover rollback repl pins pin-status pin-claim pin-release pin-mode pin-read pin-write" cr
+  ." ! extended explain source history define meta save validate safe-save restart" cr
+  ." ! extended recover rollback repl pins pin-status pin-claim pin-release" cr
+  ." ! extended pin-mode pin-read pin-write pin-capture-cap pin-capture" cr
   br.!end ;
 
 : br-validate? ( -- f )
@@ -1023,6 +1155,8 @@ variable br-old-notfound
   2dup s" pin-mode" str= if 2drop s" pin-mode" br-call$ exit then
   2dup s" pin-read" str= if 2drop s" pin-read" br-call$ exit then
   2dup s" pin-write" str= if 2drop s" pin-write" br-call$ exit then
+  2dup s" pin-capture-cap" str= if 2drop s" pin-capture-cap" br-call$ exit then
+  2dup s" pin-capture" str= if 2drop s" pin-capture" br-call$ exit then
   s" notfound" br.#err
   2dup br.#
   br.!end

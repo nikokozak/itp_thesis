@@ -35,6 +35,8 @@
 | `pin-mode` | `<pin> in\|out [pull=up\|down\|none] [force=1]` | `! ok` | Configure GPIO (Milestone E) |
 | `pin-read` | `<pin>` | `! value <0\|1>` | Read GPIO level (Milestone E) |
 | `pin-write` | `<pin> 0\|1 [force=1]` | `! ok` | Write GPIO level (Milestone E) |
+| `pin-capture-cap` | — | Cap lines | Describe pin-capture capabilities |
+| `pin-capture` | `<pin> [n=<u>] [dt=<u>] [format=rle\|list]` | Capture block | Capture a digital time series (bounded) |
 
 ### Safety Commands (All Nodes)
 
@@ -133,6 +135,37 @@ Notes:
 ! end
 ```
 
+### Pin Capture Cap Response (`pin-capture-cap`)
+
+```
+! cap kind=digital mode=sample dest=stream formats=rle,list dt_unit=ms min_dt=<u> max_n=<u> default_dt=<u> default_n=<u>
+! end
+```
+
+### Pin Capture Response (`pin-capture`)
+
+Header line:
+
+```
+! capture gpio=<n> kind=digital mode=sample dest=stream n=<u> dt=<u> dt_unit=ms format=<rle|list>
+```
+
+RLE format:
+
+```
+! run v=<0|1> n=<u>
+! run v=<0|1> n=<u>
+! end
+```
+
+List format:
+
+```
+! samp i=<u> v=<0|1>
+! samp i=<u> v=<0|1>
+! end
+```
+
 ### Source Response (`source`)
 
 ```
@@ -181,6 +214,11 @@ Common error codes (non-exhaustive):
 - `pin_strapping`: pin is a boot strapping pin; requires explicit override (`force=1`) for `pin-mode`/`pin-write`.
 - `pin_flash`: pin is reserved for flash IO and cannot be used.
 - `pin_input_only`: pin cannot be configured as output.
+- `capture_syntax`: malformed `pin-capture` request (missing/invalid tokens).
+- `capture_token`: unknown `pin-capture` token.
+- `capture_n_range`: `n` is out of allowed range.
+- `capture_dt_range`: `dt` is out of allowed range.
+- `capture_format_invalid`: invalid `format` value.
 
 ## Connector Pinout
 

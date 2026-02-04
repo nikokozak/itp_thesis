@@ -55,6 +55,12 @@ from bedrock.pins import (
     parse_pin_kv,
     parse_pin_value_response,
 )
+from bedrock.capture import (
+    count_transitions,
+    parse_capture_cap_response,
+    parse_capture_response,
+    render_digital_preview,
+ )
 from bedrock.boards import get_manifest, list_boards, BoardManifest
 
 if TYPE_CHECKING:
@@ -1389,6 +1395,147 @@ def cmd_pin_trace(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_pin_capture(args: argparse.Namespace) -> int:
+    """Handle the `pin capture` subcommand.
+
+    Uses the on-node `pin-capture` command (digital-only v1).
+    """
+    # Validate knob selection.
+    using_n_dt = args.n is not None or args.dt_ms is not None
+    using_seconds_hz = args.seconds is not None or args.hz is not None
+    if using_n_dt and using_seconds_hz:
+        print("Error: Use either --n/--dt-ms OR --seconds/--hz (not both).", file=sys.stderr)
+        return 1
+
+    if using_n_dt and (args.n is None or args.dt_ms is None):
+        print("Error: --n and --dt-ms must be provided together.", file=sys.stderr)
+        return 1
+
+    if using_seconds_hz and (args.seconds is None or args.hz is None):
+        print("Error: --seconds and --hz must be provided together.", file=sys.stderr)
+        return 1
+
+    try:
+        with SerialSession.open(
+            port=args.port,
+            baud=args.baud,
+            settle_s=args.settle,
+        ) as session:
+            with get_transcript(args, session.port) as transcript:
+                if not ensure_protocol(session, timeout_s=args.timeout):
+                    print("Error: Could not enter protocol mode.", file=sys.stderr)
+                    return 1
+
+                # Optional one-shot pin config before capture.
+                if args.mode or args.pull:
+                    mode = args.mode or "in"
+                    cmd = f"pin-mode {args.pin} {mode}"
+                    if args.pull:
+                        cmd += f" pull={args.pull}"
+                    if args.force:
+                        cmd += " force=1"
+                    transcript.record_sent(cmd)
+                    response = session.send_protocol(cmd, timeout_s=args.timeout)
+                    transcript.record_received(response)
+                    has_error, error_msg = is_error(response)
+                    if has_error:
+                        print(f"Error: {error_msg}", file=sys.stderr)
+                        return 1
+
+                # Capability probe (helps pick defaults + gives a nicer error if unsupported).
+                transcript.record_sent("pin-capture-cap")
+                cap_resp = session.send_protocol("pin-capture-cap", timeout_s=args.timeout)
+                transcript.record_received(cap_resp)
+                has_error, error_msg = is_error(cap_resp)
+                if has_error:
+                    if error_msg == "notfound":
+                        print(
+                            "Error: Firmware does not support `pin-capture`.\n"
+                            "Reload the latest `firmware/esp32/bedrock.fs`.",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                cap = parse_capture_cap_response(cap_resp)
+                default_n = cap.default_n if cap and cap.default_n else 200
+                default_dt = cap.default_dt if cap and cap.default_dt else 10
+
+                if using_seconds_hz:
+                    seconds = float(args.seconds)
+                    hz = float(args.hz)
+                    if seconds <= 0:
+                        print("Error: --seconds must be > 0.", file=sys.stderr)
+                        return 1
+                    if hz <= 0:
+                        print("Error: --hz must be > 0.", file=sys.stderr)
+                        return 1
+                    n = max(1, int(round(seconds * hz)))
+                    dt_ms = max(1, int(round(1000.0 / hz)))
+                elif using_n_dt:
+                    n = int(args.n)
+                    dt_ms = int(args.dt_ms)
+                else:
+                    n = int(default_n)
+                    dt_ms = int(default_dt)
+
+                expected_s = (n * dt_ms) / 1000.0
+                timeout_s = max(float(args.timeout), expected_s + 2.0)
+
+                out_path: Path | None
+                if args.out:
+                    out_path = Path(args.out)
+                else:
+                    repo_root = _this_dir.parent.parent
+                    out_dir = repo_root / ".bedrock" / "captures"
+                    stamp = time.strftime("%Y%m%d-%H%M%S")
+                    pin_label = str(args.pin).replace("/", "_")
+                    out_path = out_dir / f"pin-{pin_label}-{stamp}.csv"
+
+                try:
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    print(f"Error: Could not create output directory: {exc}", file=sys.stderr)
+                    return 1
+
+                cmd = f"pin-capture {args.pin} n={n} dt={dt_ms} format={args.format}"
+                transcript.record_sent(cmd)
+                response = session.send_protocol(cmd, timeout_s=timeout_s)
+                transcript.record_received(response)
+
+                has_error, error_msg = is_error(response)
+                if has_error:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                    return 1
+
+                header, samples = parse_capture_response(response)
+                transitions = count_transitions(samples)
+                preview = render_digital_preview(samples, width=60)
+
+                # Write CSV
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write("# Bedrock pin capture\n")
+                    f.write(f"# port: {session.port}\n")
+                    f.write(f"# pin: {args.pin} (gpio {header.gpio})\n")
+                    f.write(f"# n: {len(samples)}\n")
+                    f.write(f"# dt_ms: {header.dt}\n")
+                    f.write(f"# format: {header.fmt}\n")
+                    f.write("i,t_ms,value\n")
+                    for i, v in enumerate(samples):
+                        f.write(f"{i},{i * header.dt},{v}\n")
+
+                print(f"Captured {args.pin} (gpio {header.gpio}) -> {out_path}")
+                print(f"  n={len(samples)} dt={header.dt}{header.dt_unit} transitions={transitions}")
+                if preview:
+                    print(f"  preview: {preview}")
+                return 0
+
+    except SerialError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_pin_write(args: argparse.Namespace) -> int:
     """Handle the `pin write` subcommand."""
     try:
@@ -1677,6 +1824,58 @@ def main(argv: list[str] | None = None) -> int:
         help="Suppress progress output.",
     )
     p_pin_trace.set_defaults(func=cmd_pin_trace)
+
+    # pin capture
+    p_pin_capture = pin_sub.add_parser("capture", help="Capture an on-node time series (pin-capture)")
+    add_common_args(p_pin_capture)
+    p_pin_capture.add_argument("pin", help="Pin identifier")
+    p_pin_capture.add_argument(
+        "--n",
+        type=int,
+        help="Number of samples to capture (requires --dt-ms).",
+    )
+    p_pin_capture.add_argument(
+        "--dt-ms",
+        type=int,
+        help="Sample interval in milliseconds (requires --n).",
+    )
+    p_pin_capture.add_argument(
+        "--seconds",
+        type=float,
+        help="Capture duration in seconds (requires --hz).",
+    )
+    p_pin_capture.add_argument(
+        "--hz",
+        type=float,
+        help="Target sample rate in Hz (requires --seconds).",
+    )
+    p_pin_capture.add_argument(
+        "--format",
+        choices=["rle", "list"],
+        default="rle",
+        help="Data format (default: rle).",
+    )
+    p_pin_capture.add_argument(
+        "--out",
+        type=Path,
+        help="Output CSV path (default: .bedrock/captures/pin-<pin>-<timestamp>.csv).",
+    )
+    p_pin_capture.add_argument(
+        "--mode",
+        choices=["in", "out"],
+        help="Optional pin mode to set before capture.",
+    )
+    p_pin_capture.add_argument(
+        "--pull",
+        choices=["up", "down", "none"],
+        help="Optional pull resistor config (implies --mode in if --mode omitted).",
+    )
+    p_pin_capture.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow strapping pins for the optional pre-capture pin-mode (sends force=1).",
+    )
+    p_pin_capture.set_defaults(func=cmd_pin_capture)
 
     # pin write
     p_pin_write = pin_sub.add_parser("write", help="Write pin level")

@@ -695,6 +695,7 @@ def io_worker(state: AppState) -> None:
                 elif action == "pin_trace":
                     from ..pins import parse_pin_kv, parse_pin_value_response
                     from pathlib import Path
+                    from ..capture import count_transitions, parse_capture_cap_response, parse_capture_response
 
                     gpio = int(args[0])
                     seconds = float(args[1]) if len(args) > 1 else 2.0
@@ -734,9 +735,20 @@ def io_worker(state: AppState) -> None:
                         state.result_queue.put(("pin_trace_error", "Pin is marked as flash; refusing to sample"))
                         continue
 
-                    # Resolve output path under repo_root/.bedrock/traces.
+                    # Prefer on-node capture when supported; fall back to host-side sampling.
+                    capture_cap = None
+                    try:
+                        cap_resp = session.send_protocol("pin-capture-cap", timeout_s=2.0)
+                        has_err, err_msg = is_error(cap_resp)
+                        if not has_err:
+                            capture_cap = parse_capture_cap_response(cap_resp)
+                    except SerialError:
+                        # Ignore and fall back to host-side sampling.
+                        capture_cap = None
+
+                    # Resolve output path under repo_root/.bedrock/<captures|traces>.
                     repo_root = Path(__file__).resolve().parents[4]
-                    out_dir = repo_root / ".bedrock" / "traces"
+                    out_dir = repo_root / ".bedrock" / ("captures" if capture_cap else "traces")
                     stamp = time.strftime("%Y%m%d-%H%M%S")
                     out_path = out_dir / f"pin-GPIO{gpio}-{stamp}.csv"
                     try:
@@ -746,6 +758,64 @@ def io_worker(state: AppState) -> None:
                         continue
 
                     state.result_queue.put(("pin_trace_start", gpio, seconds, hz, str(out_path)))
+
+                    if capture_cap:
+                        # Translate seconds/hz into bounded n + dt_ms.
+                        n = max(1, int(round(seconds * hz)))
+                        dt_ms = max(1, int(round(1000.0 / hz)))
+                        if capture_cap.max_n and n > capture_cap.max_n:
+                            n = capture_cap.max_n
+                        if capture_cap.min_dt and dt_ms < capture_cap.min_dt:
+                            dt_ms = capture_cap.min_dt
+
+                        expected_s = (n * dt_ms) / 1000.0
+                        timeout_s = max(3.0, expected_s + 2.0)
+
+                        start = time.perf_counter()
+                        resp = session.send_protocol(
+                            f"pin-capture {gpio} n={n} dt={dt_ms} format=rle",
+                            timeout_s=timeout_s,
+                        )
+                        has_err, err_msg = is_error(resp)
+                        if has_err:
+                            state.result_queue.put(("pin_trace_error", f"pin-capture failed: {err_msg}"))
+                            continue
+
+                        header, samples01 = parse_capture_response(resp)
+                        elapsed = max(1e-6, time.perf_counter() - start)
+                        eff_hz = len(samples01) / elapsed
+
+                        try:
+                            with open(out_path, "w", encoding="utf-8") as f:
+                                f.write("# Bedrock pin capture (on-node)\n")
+                                f.write(f"# port: {session.port}\n")
+                                f.write(f"# pin: GPIO{gpio} (gpio {header.gpio})\n")
+                                f.write(f"# n: {len(samples01)}\n")
+                                f.write(f"# dt_ms: {header.dt}\n")
+                                f.write(f"# format: {header.fmt}\n")
+                                f.write("i,t_ms,value\n")
+                                for i, v in enumerate(samples01):
+                                    f.write(f"{i},{i * header.dt},{v}\n")
+                        except OSError as exc:
+                            state.result_queue.put(("pin_trace_error", f"Could not write CSV: {exc}"))
+                            continue
+
+                        transitions = count_transitions(samples01)
+                        preview_n = 80
+                        preview = "".join("1" if v == 1 else "0" for v in samples01[:preview_n])
+                        state.result_queue.put(
+                            (
+                                "pin_trace_ok",
+                                gpio,
+                                str(out_path),
+                                len(samples01),
+                                elapsed,
+                                eff_hz,
+                                transitions,
+                                preview,
+                            )
+                        )
+                        continue
 
                     # Capture loop (best-effort timing).
                     start = time.perf_counter()
@@ -1524,7 +1594,8 @@ def handle_pins_input(state: AppState, key: int) -> None:
         if selected_gpio is not None:
             state.io_queue.put(("pin_release", selected_gpio))
     elif key == ord("s") or key == ord("S"):
-        # Capture a short host-side time series using repeated pin-read calls.
+        # Capture a short time series.
+        # Prefers on-node `pin-capture` if available; falls back to host-side pin-read sampling.
         if selected_gpio is not None:
             state.pins_trace_running = True
             state.pins_trace_gpio = selected_gpio
@@ -2155,7 +2226,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             pct = int(state.pins_trace_progress * 100.0)
             instr = f"Tracing GPIO{state.pins_trace_gpio}... {pct:3d}%  (please wait)  Esc Back"
         else:
-            instr = "j/k Move  t Toggle drive  i Input+PU  o Output  a View  ! Arm  s Sample  c Claim  u Release  r Refresh  Esc Back"
+            instr = "j/k Move  t Toggle drive  i Input+PU  o Output  a View  ! Arm  s Trace  c Claim  u Release  r Refresh  Esc Back"
         win.addstr(
             y + inner_h - 1,
             x,
