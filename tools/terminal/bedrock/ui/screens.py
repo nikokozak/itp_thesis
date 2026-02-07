@@ -960,7 +960,10 @@ def io_worker(state: AppState) -> None:
                     if has_err:
                         state.result_queue.put(("pin_action_error", f"Mode change failed: {err_msg}"))
                     else:
-                        state.result_queue.put(("pin_action_ok", f"GPIO{gpio} set to {mode}"))
+                        msg = f"GPIO{gpio} set to {mode}"
+                        if pull is not None:
+                            msg += f" pull={pull}"
+                        state.result_queue.put(("pin_action_ok", msg))
                         refresh_pin_status(session, gpio)
 
                 elif action == "pin_write":
@@ -1627,7 +1630,7 @@ def handle_pins_input(state: AppState, key: int) -> None:
             else:
                 state.log.append(f"GPIO{selected_gpio} unknown, cannot toggle", COLOR_ERROR)
     elif key == ord("i") or key == ord("I"):
-        # Set pin to input
+        # Set pin to input with pull-up (default UX for buttons).
         if selected_gpio is not None:
             pin_state = state.pins_data.get(selected_gpio)
             if pin_state and pin_state.is_flash():
@@ -1637,6 +1640,17 @@ def handle_pins_input(state: AppState, key: int) -> None:
             else:
                 force = bool(pin_state and pin_state.is_strapping())
                 state.io_queue.put(("pin_mode", selected_gpio, "in", "up", force))
+    elif key == ord("f") or key == ord("F"):
+        # Set pin to input floating (no pull-up/down).
+        if selected_gpio is not None:
+            pin_state = state.pins_data.get(selected_gpio)
+            if pin_state and pin_state.is_flash():
+                state.log.append(f"GPIO{selected_gpio} is a flash pin, cannot change mode", COLOR_ERROR)
+            elif pin_state and pin_state.is_strapping() and not _pins_danger_armed(state):
+                state.log.append(f"GPIO{selected_gpio} is strapping; press '!' to arm then retry", COLOR_ERROR)
+            else:
+                force = bool(pin_state and pin_state.is_strapping())
+                state.io_queue.put(("pin_mode", selected_gpio, "in", "none", force))
     elif key == ord("o") or key == ord("O"):
         # Set pin to output
         if selected_gpio is not None:
@@ -1813,7 +1827,7 @@ def draw_help(win: curses.window, state: AppState) -> None:
     row += 1
     add_binding(row, "t", "Toggle drive (0<->1)", COLOR_PROMPT)
     row += 1
-    add_binding(row, "i/o", "Mode: Input (pull-up) / Output", COLOR_PROMPT)
+    add_binding(row, "i/f/o", "Mode: Input+PU / Input float / Output", COLOR_PROMPT)
     row += 1
     add_binding(row, "a", "View: Board footprint / All GPIOs", COLOR_PROMPT)
     row += 1
@@ -2226,7 +2240,7 @@ def draw_pins(win: curses.window, state: AppState) -> None:
             pct = int(state.pins_trace_progress * 100.0)
             instr = f"Tracing GPIO{state.pins_trace_gpio}... {pct:3d}%  (please wait)  Esc Back"
         else:
-            instr = "j/k Move  t Toggle drive  i Input+PU  o Output  a View  ! Arm  s Trace  c Claim  u Release  r Refresh  Esc Back"
+            instr = "j/k Move  t Toggle drive  i Input+PU  f Input(float)  o Output  a View  ! Arm  s Trace  c Claim  u Release  r Refresh  Esc Back"
         win.addstr(
             y + inner_h - 1,
             x,
