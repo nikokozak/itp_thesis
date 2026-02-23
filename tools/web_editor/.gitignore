@@ -1,0 +1,14 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Build outputs
+dist/
+coverage/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# OS/editor junk
+.DS_Store
+
