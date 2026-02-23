@@ -12,13 +12,13 @@ interface WordInspectorProps {
   onGoToDefinition?: (globalLine: number) => void;
 }
 
-function effectLabel(effect?: { inputs: number; outputs: number; verified?: boolean; opaque?: boolean }): string {
+function effectLabel(effect?: { inputs: number; outputs: number; opaque?: boolean }, hasSig?: boolean): string {
   if (!effect) {
     return '?';
   }
 
-  const verification = effect.verified ? 'verified' : effect.opaque ? 'opaque' : 'declared';
-  return `(${effect.inputs} -> ${effect.outputs}) ${verification}`;
+  const tag = hasSig ? '' : effect.opaque ? ' opaque' : '';
+  return `(${effect.inputs} -> ${effect.outputs})${tag}`;
 }
 
 function pickDefaultWordUpper(dictionary: WordEntry[], xref: Record<string, XRefEntry>): string | undefined {
@@ -59,6 +59,7 @@ export function WordInspector({
     [dictionary, resolvedUpper]
   );
   const effect = resolvedUpper ? effects[resolvedUpper] : undefined;
+  const hasSig = runtimeEntry?.type === 'primitive' || !!xrefEntry?.declaredEffect;
   const resolvedName = xrefEntry?.word ?? runtimeEntry?.name ?? resolvedUpper;
 
   const [docDraft, setDocDraft] = useState('');
@@ -96,7 +97,7 @@ export function WordInspector({
         </div>
         <div>
           <strong>Stack effect</strong>
-          <div>{effectLabel(effect)}</div>
+          <div>{effectLabel(effect, hasSig)}</div>
         </div>
         <div>
           <strong>Calls (runtime)</strong>

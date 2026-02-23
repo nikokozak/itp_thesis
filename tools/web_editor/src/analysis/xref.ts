@@ -47,6 +47,7 @@ export function buildCrossReference(
     entry.definedAt = definition.startLine;
     entry.source = definition.source;
     entry.stackEffect = effectDb[definition.name.toUpperCase()];
+    entry.declaredEffect = definition.declaredEffect;
 
     const calleeSet = new Set<string>();
     for (const token of definition.body) {

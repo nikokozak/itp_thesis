@@ -346,8 +346,9 @@ function wordTooltipExtension(
             if (dictEntry) {
               headerLine += ` <span class="tooltip-meta">${dictEntry.type}</span>`;
             }
-            if (effect) {
-              headerLine += ` <span class="tooltip-badge ${effect.verified ? 'verified' : 'unverified'}">${effect.verified ? 'verified' : 'declared'}</span>`;
+            const hasSig = dictEntry?.type === 'primitive' || !!xrefEntry?.declaredEffect;
+            if (hasSig) {
+              headerLine += ` <span class="tooltip-badge verified">sig</span>`;
             }
             parts.push(headerLine);
 

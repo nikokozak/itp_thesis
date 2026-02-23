@@ -59,4 +59,5 @@ export interface XRefEntry {
   documentation?: string;
   stackEffect?: StackEffect;
   source?: string;
+  declaredEffect?: string;
 }

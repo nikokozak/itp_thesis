@@ -739,20 +739,10 @@ body.is-resizing-panels {
 }
 
 .cm-word-tooltip .tooltip-badge {
-  font-size: 0.66rem;
-  padding: 0.08rem 0.3rem;
-  border-radius: var(--radius-s);
-  font-weight: 500;
-}
-
-.cm-word-tooltip .tooltip-badge.verified {
-  background: #d4edda;
-  color: #155724;
-}
-
-.cm-word-tooltip .tooltip-badge.unverified {
-  background: #fff3cd;
-  color: #856404;
+  font-size: 0.62rem;
+  color: var(--ink-2);
+  font-style: italic;
+  font-weight: 400;
 }
 
 .cm-word-tooltip .tooltip-effect {
